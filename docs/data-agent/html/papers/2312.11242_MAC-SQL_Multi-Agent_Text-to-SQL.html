@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MAC-SQL: Multi-Agent Collaborative Framework for Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2312.11242_MAC-SQL_Multi-Agent_Text-to-SQL.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2312.11242 · COLING 2025</div>
+    <h1>MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL</h1>
+    <div class="meta">
+      <span>👥 Bing Wang, Changyu Ren, Jian Yang, Xinnian Liang, Jiaqi Bai, Linzheng Chai, Zhao Yan, Qian-Wen Zhang, Di Yin, Xing Sun, Zhoujun Li</span>
+      <span>🏛️ 北航 + 腾讯</span>
+      <span>📅 2023.12（v6: 2025.03）</span>
+    </div>
+    <p class="tagline">
+      首个把 NL2SQL 流水线"<strong>实体化为 Agent</strong>"的多 Agent 协作框架：
+      <code>Selector</code>（schema 压缩）→ <code>Decomposer</code>（CoT 子问题分解）→ <code>Refiner</code>（执行反馈纠错）。
+      用 GPT-4 在 BIRD 测试集达到 <strong>59.59% EX</strong>，开创 Text-to-SQL 多 Agent 范式。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">3</div><div class="label">协作 Agent</div></div>
+      <div class="stat"><div class="value">59.59%</div><div class="label">BIRD Test EX (GPT-4)</div></div>
+      <div class="stat"><div class="value">70.58</div><div class="label">BIRD Test VES</div></div>
+      <div class="stat"><div class="value">SQL-Llama-7B</div><div class="label">开源 SFT 版本</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ DIN-SQL 等单 LLM Pipeline 的局限</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① Schema 太大塞不下</h4>
+          <p>BIRD 中很多 DB 包含 50+ 张表、上千列。DIN-SQL 直接把整个 schema 塞 prompt，超 token 限制或注意力稀释。</p>
+        </div>
+        <div>
+          <h4>② "一次推理"难以覆盖复杂逻辑</h4>
+          <p>嵌套查询 + 多 JOIN + 聚合 + 外部知识，单步 CoT 容易跳步出错。</p>
+        </div>
+        <div>
+          <h4>③ 错误反馈未被利用</h4>
+          <p>SQL 执行失败时，错误信息（语法错、列不存在、类型不匹配）是宝贵信号，但 DIN-SQL 仅用静态 self-correction，不真正执行。</p>
+        </div>
+        <div>
+          <h4>④ 没有"职责-提示对齐"</h4>
+          <p>同一个 LLM 在 prompt 内同时承担"找列、分类、生成、纠错"多重角色，相互干扰。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察</h3>
+      <p>
+        把 NL2SQL pipeline 中的<strong>每个职责</strong>显式分配给一个独立的 LLM Agent，让它们用自然语言协作：
+        <strong>"专人专事 + 工具反馈 + 多轮迭代"</strong>，比单 LLM 端到端更鲁棒。
+      </p>
+      <p>这是 NL2SQL 领域第一次把"agent-as-role"思想引入，启发了后续 CHESS、CHASE-SQL 的"多 Agent 集成"路线。</p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">User Question + Full Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">🎯 Selector Agent: 压缩 schema</span>
+      <span class="arrow">→</span>
+      <span class="step">🧠 Decomposer Agent: CoT 拆子问题</span>
+      <span class="arrow">→</span>
+      <span class="step">🔧 Refiner Agent: 执行→错误→修正</span>
+      <span class="arrow">↺</span>
+      <span class="step">最多 K 轮迭代</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：三 Agent 协作架构</h2>
+
+      <div class="tabs" id="m-tabs">
+        <button class="tab-btn" data-tab="m1">🎯 Selector</button>
+        <button class="tab-btn" data-tab="m2">🧠 Decomposer</button>
+        <button class="tab-btn" data-tab="m3">🔧 Refiner</button>
+        <button class="tab-btn" data-tab="m4">📦 SQL-Llama (开源版)</button>
+
+        <div class="tab-content" id="m1">
+          <h4>Selector Agent：压缩 schema</h4>
+          <p><strong>目标</strong>：从一个可能含 50+ 表、千列的 DB 中抽取与问题相关的 sub-schema，使 prompt 在 token 限制内仍信息密度高。</p>
+          <p><strong>策略</strong>：</p>
+          <ul>
+            <li>把 schema 序列化为 <code>CREATE TABLE</code> 风格</li>
+            <li>用 GPT-4 阅读"问题 + 完整 schema"，输出"必要表/列"清单</li>
+            <li>对超大 schema（&gt;25 表），分批喂入 Selector，最后求并集</li>
+          </ul>
+          <p><strong>关键设计</strong>：Selector 给的是"宁多勿少"的表/列清单（recall &gt; precision），由后续 Decomposer 自然地"用啥取啥"。</p>
+        </div>
+
+        <div class="tab-content" id="m2">
+          <h4>Decomposer Agent：分而治之</h4>
+          <p><strong>对简单问题</strong>：直接生成 SQL。</p>
+          <p><strong>对复杂问题</strong>：用 CoT 把问题拆成子问题序列：</p>
+<pre><code class="language-text">Q: "What is the average age of male teachers in schools where 
+   the most expensive math textbook is published by Pearson?"
+
+Sub-Q1: 找 Pearson 出版的最贵数学课本所在学校
+Sub-Q2: 在这些学校中找男教师
+Sub-Q3: 计算他们的平均年龄
+
+每个 Sub-Q 单独生成一段 SQL，最终组合成嵌套查询或 CTE</code></pre>
+          <p><strong>关键设计</strong>：Decomposer 输出的不仅是"最终 SQL"，还包括"中间 SQL 推理链"，方便 Refiner 在某一步出错时局部修复。</p>
+        </div>
+
+        <div class="tab-content" id="m3">
+          <h4>Refiner Agent：执行反馈循环</h4>
+          <p><strong>核心</strong>：真正在数据库上 <code>EXECUTE</code> 生成的 SQL，根据反馈类型采取不同纠正策略：</p>
+          <table class="cmp">
+            <thead><tr><th>反馈类型</th><th>动作</th></tr></thead>
+            <tbody>
+              <tr><td>语法错</td><td>把错误信息回填给 LLM 让其修复</td></tr>
+              <tr><td>列/表不存在</td><td>回到 Selector 扩展 schema</td></tr>
+              <tr><td>结果为空集</td><td>重审 WHERE 条件、JOIN 关系（"软错误"）</td></tr>
+              <tr><td>类型不匹配</td><td>检查 cast/compare 操作</td></tr>
+              <tr><td>正常返回</td><td>停止迭代，输出 SQL</td></tr>
+            </tbody>
+          </table>
+          <p>最多 K=3 轮迭代（论文实验 K=3 即可收敛）。</p>
+        </div>
+
+        <div class="tab-content" id="m4">
+          <h4>SQL-Llama（开源 SFT 模型）</h4>
+          <p>论文同步开源 <strong>SQL-Llama-7B</strong>：用 MAC-SQL 框架在大量 BIRD/Spider 训练集上自动生成"问题 + 子问题 + SQL"轨迹，再用这些轨迹 SFT 一个 Code-Llama-7B。</p>
+          <p>结果（论文 Table）：MAC-SQL + SQL-Llama(7B) 在 <strong>BIRD-dev 达到 43.94% EX、57.36 VES</strong>；接 Oracle Schema 时 BIRD-dev 升至 <strong>51.43% EX、58.24 VES</strong>。证明 MAC-SQL 框架的"教师-学生蒸馏"路径可行，是当时同尺寸开源模型有竞争力的成果。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：MAC-SQL 把 DIN-SQL 的"模块"升级为"Agent"。区别在于：模块是单线程、Agent 间通过自然语言对话；Refiner 真正与执行环境交互（DIN-SQL 仅 LLM 自我审视）。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>BIRD（含脏数据 + 外部知识 + 效率）</li>
+          <li>Spider 1.0（跨域多表）</li>
+          <li>Spider-SYN（同义词扰动）</li>
+          <li>Spider-Realistic（去除 schema 词面提示）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL + GPT-4</li>
+          <li>DAIL-SQL + GPT-4</li>
+          <li>C3-SQL + GPT-3.5</li>
+          <li>FT 路线：T5-3B + PICARD, RESDSQL-3B</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">BIRD Test EX (GPT-4)</div>
+          <div class="value">59.59<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:59.59%;"></div></div>
+          <div class="delta up">论文官方数字（COLING 2025）</div>
+        </div>
+        <div class="metric">
+          <div class="label">BIRD Test VES</div>
+          <div class="value">70.58</div>
+          <div class="bar"><div style="width:70.58%;"></div></div>
+          <div class="delta up">同时兼顾正确性与效率</div>
+        </div>
+        <div class="metric">
+          <div class="label">SQL-Llama-7B BIRD-dev</div>
+          <div class="value">43.94<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:43.94%;"></div></div>
+          <div class="delta up">开源 7B 模型 + Oracle Schema → 51.43%</div>
+        </div>
+      </div>
+
+      <h3>论文 Table 5/6 摘录</h3>
+      <table class="cmp">
+        <thead><tr><th>配置</th><th>BIRD-dev EX</th><th>BIRD-dev VES</th></tr></thead>
+        <tbody>
+          <tr><td>MAC-SQL + GPT-3.5-Turbo</td><td>50.56</td><td>61.25</td></tr>
+          <tr><td>MAC-SQL + GPT-4</td><td>57.56</td><td>69.39</td></tr>
+          <tr><td>MAC-SQL + SQL-Llama-7B</td><td>43.94</td><td>57.36</td></tr>
+          <tr><td>MAC-SQL + SQL-Llama-7B + Oracle Schema</td><td>51.43</td><td>58.24</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：MAC-SQL 论文（<a href="https://arxiv.org/pdf/2312.11242" target="_blank">arXiv:2312.11242 v6</a>）。</p>
+
+      <h3>消融研究（论文 §5）</h3>
+      <p>论文按"逐 Agent 去除"做消融，证明三 Agent 各自贡献：</p>
+      <ul>
+        <li>去掉 <strong>Selector</strong>（直接喂全 schema）：在大型 BIRD DB 上准确率显著下降，且推理 token 数飙升</li>
+        <li>去掉 <strong>Decomposer</strong>（一步直出 SQL）：嵌套查询的执行成功率明显下滑</li>
+        <li>去掉 <strong>Refiner</strong>（无执行反馈）：语法错和列名错没机会被修复</li>
+      </ul>
+      <p style="font-size:.9rem; color:var(--text-soft);">注：上述定性结论来自论文消融小节；具体数值因不同 LLM/版本略有差异，详见论文 Table。<strong>关键发现：在大型 schema 场景下，Selector 收益最大；在复杂查询上 Decomposer/Refiner 收益更大。</strong></p>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 三 Agent 协同的失败模式覆盖</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于论文 Section 3（Method）与 Section 4（Experiments）的设计动机，三个 Agent 各自针对 NL2SQL 的一类典型失败模式，下文按模式而非具体题目展开。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">模式 1: 大 schema 上下文超长</button>
+      <button class="tab-btn" data-tab="c2">模式 2: 复杂嵌套查询</button>
+      <button class="tab-btn" data-tab="c3">模式 3: 执行期错误</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>Selector 应对的失败模式：schema 太大 / 噪声列干扰</h4>
+      <p>BIRD 的部分库含数十张表、数百列，全 schema 一次性塞 prompt 既超 token 限制，又因无关列干扰让 SQL 生成器选错 JOIN/WHERE 列。</p>
+      <p>论文 Selector 的设计：</p>
+      <ul>
+        <li>对每个问题动态裁剪出包含必要表/列的子 schema；</li>
+        <li>策略偏 recall（保守保留候选列），把 precision 留给后续 Decomposer；</li>
+        <li>论文 Section 4 消融显示，移除 Selector 在大型 BIRD DB 上准确率显著下降，且 token 消耗飙升 —— 是 MAC-SQL 在大 schema 场景下的关键收益来源。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>Decomposer 应对的失败模式：嵌套 / 多步推理</h4>
+      <p>包含子查询、HAVING、UNION/EXCEPT 等的复杂查询，单步 prompt 难以一次写对。</p>
+      <p>论文 Decomposer 的设计：</p>
+      <ul>
+        <li>把复杂问题拆解为若干"子问题 + 子 SQL"，以 Chain-of-Thought 方式逐步生成；</li>
+        <li>每个子步骤都基于 Selector 给出的精简 schema；</li>
+        <li>论文消融显示移除 Decomposer 主要拖累嵌套查询难度子集的表现。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>Refiner 应对的失败模式：执行期错误 / 列名不存在 / 类型不匹配</h4>
+      <p>SQL 生成阶段语法看似合理，但实际执行可能因列名拼写、类型 cast、空表/越界等原因失败。纯 self-review（如 DIN-SQL 的 Self-Correction）无法拿到执行端真实信号。</p>
+      <p>论文 Refiner 的设计：</p>
+      <ul>
+        <li>真正在 DB 上执行 SQL，捕获错误码 / 错误消息 / 空结果；</li>
+        <li>把这些反馈作为"工具结果"喂回 LLM 触发再生成；</li>
+        <li>这种"<strong>执行驱动</strong>"的纠错被几乎所有后续 NL2SQL 工作（CHESS、CHASE-SQL、XiYan-SQL、Agentar）继承。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>Agent = 模块 + 角色 + 工具反馈</strong></li>
+            <li><strong>Selector recall &gt; precision</strong>：宁多勿少</li>
+            <li><strong>执行反馈 &gt; 自审视</strong>：真正跑一下比 LLM 自己想强</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>NL2SQL 多 Agent 范式开创者</li>
+            <li>SQL-Llama-7B 是最早的开源 NL2SQL agent SFT 模型</li>
+            <li>引入"执行反馈循环"，被几乎所有后续工作继承</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 影响</h3>
+          <ul>
+            <li>COLING 2025 收录</li>
+            <li>启发了 CHASE-SQL、XiYan-SQL 的多生成器思想</li>
+            <li>开源后被工业界（PingCAP、Snowflake、阿里云）参考</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>三 Agent 全用 GPT-4，推理成本高（每问 ~3 次 API 调用）</li>
+            <li>Selector 在千列 schema 上仍可能漏列 → CHESS 改进</li>
+            <li>无候选生成与排序 → CHASE-SQL/XiYan-SQL 补足</li>
+            <li>无交互能力 → BIRD-Interact 评估暴露问题</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2312.11242" target="_blank">arXiv:2312.11242</a></li>
+      <li>💻 代码：<a href="https://github.com/wbbeyourself/MAC-SQL" target="_blank">github.com/wbbeyourself/MAC-SQL</a></li>
+      <li>🤗 模型：<a href="https://huggingface.co/wbbeyourself/SQL-Llama-7b" target="_blank">SQL-Llama-7B on HuggingFace</a></li>
+      <li>📑 后续：CHESS（多 Agent + 检索增强）· CHASE-SQL（多生成器集成）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · MAC-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

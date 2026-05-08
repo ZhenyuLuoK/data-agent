@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangGraph Agent 拓扑架构详解 — 可视化总结</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            50:  '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        html { scroll-behavior: smooth; }
+        body { font-family: 'Inter', sans-serif; }
+        .section-anchor { scroll-margin-top: 80px; }
+        .grad-hero {
+            background: radial-gradient(circle at 20% 0%, #4338ca 0%, transparent 50%),
+                        radial-gradient(circle at 80% 100%, #7c3aed 0%, transparent 50%),
+                        linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
+        }
+        .grad-text {
+            background: linear-gradient(135deg, #818cf8 0%, #c084fc 50%, #f0abfc 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .node-card {
+            position: relative;
+            transition: transform .2s ease, box-shadow .2s ease;
+        }
+        .node-card:hover { transform: translateY(-2px); box-shadow: 0 12px 24px -8px rgba(0,0,0,.18); }
+        .node-card .pin {
+            position: absolute; top: -10px; right: -10px;
+            width: 28px; height: 28px; border-radius: 9999px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; color: white;
+            box-shadow: 0 4px 8px rgba(0,0,0,.15);
+        }
+        .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 9999px; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+        .arrow-down::after {
+            content: '↓'; display: block; text-align: center;
+            font-size: 22px; color: #a78bfa; line-height: 1; margin: 4px 0;
+        }
+        .tab-btn { transition: all .2s ease; }
+        .tab-btn.active { background: linear-gradient(135deg,#6366f1,#8b5cf6); color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn .25s ease; }
+        @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform: none;} }
+        .glyph {
+            width: 44px; height: 44px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px;
+        }
+        .scrollnav a { transition: color .2s ease; }
+        .scrollnav a:hover { color: #4f46e5; }
+        details > summary { list-style: none; cursor: pointer; }
+        details > summary::-webkit-details-marker { display: none; }
+        details[open] > summary .chev { transform: rotate(90deg); }
+        .chev { transition: transform .2s ease; display: inline-block; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+<!-- ========== Sticky Nav ========== -->
+<nav class="sticky top-0 z-40 bg-white/85 backdrop-blur border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold">L</div>
+            <span class="font-bold text-gray-900">LangGraph Agent · 架构总结</span>
+        </div>
+        <div class="hidden md:flex gap-5 text-sm text-gray-600 scrollnav">
+            <a href="#overview">总览</a>
+            <a href="#topology">拓扑</a>
+            <a href="#dataflow">数据流</a>
+            <a href="#routing">路由</a>
+            <a href="#budget">预算</a>
+            <a href="#hallucination">抗幻觉</a>
+            <a href="#cases">失败案例</a>
+            <a href="#takeaways">洞察</a>
+            <a href="#compare">对比</a>
+        </div>
+    </div>
+</nav>
+
+<!-- ========== Hero ========== -->
+<header class="grad-hero text-white py-20 px-6 relative overflow-hidden">
+    <div class="absolute inset-0 opacity-20" style="background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.4) 1px, transparent 0); background-size: 28px 28px;"></div>
+    <div class="max-w-7xl mx-auto relative">
+        <div class="flex flex-wrap items-center gap-2 mb-6">
+            <span class="badge bg-indigo-500/30 text-indigo-100 border border-indigo-300/30">Agent Architecture</span>
+            <span class="badge bg-fuchsia-500/30 text-fuchsia-100 border border-fuchsia-300/30">LangGraph</span>
+            <span class="badge bg-emerald-500/30 text-emerald-100 border border-emerald-300/30">DAG-Driven</span>
+            <span class="badge bg-amber-500/30 text-amber-100 border border-amber-300/30">DABench Baseline</span>
+        </div>
+        <h1 class="text-5xl md:text-6xl font-extrabold leading-tight mb-6">
+            LangGraph Agent <br>
+            <span class="grad-text">拓扑架构详解</span>
+        </h1>
+        <p class="text-xl text-indigo-100 max-w-3xl mb-8 leading-relaxed">
+            一份针对 <span class="font-semibold text-white">DABench 数据分析任务</span>深度加固的工业级 Agent —— 把传统 ReAct 折弯为
+            <span class="font-semibold text-white">Plan–Schedule–Execute–Reflect</span> 闭环，附带四层同心预算与七大确定性路由器。
+        </p>
+        <p class="text-sm text-indigo-200/80 mb-10">
+            源文档：<code class="bg-white/10 px-2 py-0.5 rounded text-indigo-100">docs/agengt_architecture.md</code> ·
+            实现：<code class="bg-white/10 px-2 py-0.5 rounded text-indigo-100">src/data_agent_baseline/agents/langgraph_agent.py</code>
+        </p>
+
+        <!-- Stat Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="bg-white/10 backdrop-blur rounded-2xl p-5 border border-white/15">
+                <div class="text-3xl font-bold text-white">9</div>
+                <div class="text-xs text-indigo-200 mt-1">类节点</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-2xl p-5 border border-white/15">
+                <div class="text-3xl font-bold text-white">7</div>
+                <div class="text-xs text-indigo-200 mt-1">条件路由器</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-2xl p-5 border border-white/15">
+                <div class="text-3xl font-bold text-white">4</div>
+                <div class="text-xs text-indigo-200 mt-1">层同心预算</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-2xl p-5 border border-white/15">
+                <div class="text-3xl font-bold text-white">3</div>
+                <div class="text-xs text-indigo-200 mt-1">独立 LLM 角色</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-2xl p-5 border border-white/15">
+                <div class="text-3xl font-bold text-white">2</div>
+                <div class="text-xs text-indigo-200 mt-1">层状态（图 + 侧通道）</div>
+            </div>
+        </div>
+    </div>
+</header>
+
+<!-- ========== §1 Overview ========== -->
+<section id="overview" class="section-anchor py-20 px-6 bg-white">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-indigo-100 text-indigo-700 mb-3">§1 · Overview</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">这是一个怎样的 Agent</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                把"通用 LLM Agent"折弯为针对数据分析任务做了大量定向加固的工业级流水线。
+            </p>
+        </div>
+
+        <!-- The Gap -->
+        <div class="bg-gradient-to-r from-red-50 to-orange-50 rounded-2xl p-8 mb-6 border-l-4 border-red-500 shadow-sm">
+            <div class="flex items-start gap-3 mb-4">
+                <div class="glyph bg-red-100 text-red-600">⚠️</div>
+                <div>
+                    <h3 class="text-xl font-bold text-red-700">传统 ReAct 在 DABench 上的失效模式</h3>
+                    <p class="text-sm text-red-600/80 mt-1">单一 LLM ↔ Tools 自循环，"思考 + 调度 + 执行 + 终止"全揉在一段对话里</p>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-3 gap-4 mt-4">
+                <div class="bg-white/80 rounded-xl p-4">
+                    <div class="font-semibold text-red-700 mb-1">🌫 上下文涣散</div>
+                    <p class="text-sm text-gray-700">长任务中对话不断膨胀，LLM 注意力被无关历史稀释。</p>
+                </div>
+                <div class="bg-white/80 rounded-xl p-4">
+                    <div class="font-semibold text-red-700 mb-1">🪤 漫游 / 跳步 / 漏做</div>
+                    <p class="text-sm text-gray-700">没有显式分解，LLM 在多步任务中容易跳过中间环节。</p>
+                </div>
+                <div class="bg-white/80 rounded-xl p-4">
+                    <div class="font-semibold text-red-700 mb-1">💀 死循环 / 卡死</div>
+                    <p class="text-sm text-gray-700">单 LLM 决定终止，没有外部预算与降级路径，task 撞 1800s 撞死。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logic Pipeline -->
+        <div class="my-10 bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+            <h4 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 text-center">设计思路演化</h4>
+            <div class="flex flex-wrap items-center justify-center gap-3 text-sm">
+                <span class="px-4 py-2 rounded-lg bg-red-100 text-red-800 font-medium">单 LLM ReAct</span>
+                <span class="text-gray-400 text-xl">→</span>
+                <span class="px-4 py-2 rounded-lg bg-orange-100 text-orange-800 font-medium">识别 4 类失效</span>
+                <span class="text-gray-400 text-xl">→</span>
+                <span class="px-4 py-2 rounded-lg bg-amber-100 text-amber-800 font-medium">显式分解 + 角色解耦</span>
+                <span class="text-gray-400 text-xl">→</span>
+                <span class="px-4 py-2 rounded-lg bg-emerald-100 text-emerald-800 font-medium">DAG + 路由器 + 同心预算</span>
+                <span class="text-gray-400 text-xl">→</span>
+                <span class="px-4 py-2 rounded-lg bg-indigo-100 text-indigo-800 font-medium">可调试可上限的工业流水线</span>
+            </div>
+        </div>
+
+        <!-- The Solution -->
+        <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl p-8 border-l-4 border-emerald-500 shadow-sm">
+            <div class="flex items-start gap-3 mb-6">
+                <div class="glyph bg-emerald-100 text-emerald-600">🎯</div>
+                <div>
+                    <h3 class="text-xl font-bold text-emerald-700">本架构的解法：Plan–Schedule–Execute–Reflect 闭环</h3>
+                    <p class="text-sm text-emerald-700/80 mt-1">把"思考 / 调度 / 执行 / 审阅"四件事分给四种角色，把"流程推进"交给确定性代码</p>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-4 gap-4">
+                <div class="bg-white rounded-xl p-5 shadow-sm border-t-4 border-indigo-500">
+                    <div class="text-3xl mb-2">🧭</div>
+                    <h4 class="font-bold mb-1">全局规划</h4>
+                    <p class="text-sm text-gray-600">一个 LLM 通看问题 + 真实数据画像，产出 DAG 计划。</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border-t-4 border-violet-500">
+                    <div class="text-3xl mb-2">⚙️</div>
+                    <h4 class="font-bold mb-1">局部执行</h4>
+                    <p class="text-sm text-gray-600">另一个 LLM 在每个 DAG 节点的聚焦提示里推进、调工具。</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border-t-4 border-fuchsia-500">
+                    <div class="text-3xl mb-2">🔍</div>
+                    <h4 class="font-bold mb-1">最终审阅</h4>
+                    <p class="text-sm text-gray-600">第三个 LLM 检查答案的结构、单位、行列形态，决定 OK / RETRY。</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm border-t-4 border-emerald-500">
+                    <div class="text-3xl mb-2">🛡</div>
+                    <h4 class="font-bold mb-1">控制流脚手架</h4>
+                    <p class="text-sm text-gray-600">调度器、重规划、失败处理、空轮纠偏，全部为纯代码节点。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §2 Topology ========== -->
+<section id="topology" class="section-anchor py-20 px-6 bg-gray-50">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-violet-100 text-violet-700 mb-3">§2 · Topology</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">9 类节点，4 大职责层</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                按"职责"把节点划成规划 / 调度 / 执行 / 监督降级四层；同层内的节点共享同一种"看待问题的视角"。
+            </p>
+        </div>
+
+        <!-- Layer 1: Planning -->
+        <div class="mb-12">
+            <div class="flex items-center gap-3 mb-5">
+                <div class="glyph bg-indigo-100 text-indigo-600">🧭</div>
+                <div>
+                    <h3 class="text-2xl font-bold text-gray-900">规划层 · Planning</h3>
+                    <p class="text-sm text-gray-500">决定"做什么"——把问题翻译成结构化 DAG。</p>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-2 gap-5">
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-indigo-100">
+                    <div class="pin bg-indigo-500">LLM</div>
+                    <h4 class="text-lg font-bold text-indigo-700 mb-2">planner</h4>
+                    <p class="text-sm text-gray-600 mb-3">整张图的入口，每任务只跑一次。把"问题 + 数据集真实文件画像"翻译为 DAG 计划，包含若干带依赖关系的子任务节点和一个显式 final node。</p>
+                    <div class="text-xs text-gray-500"><span class="font-semibold">输入：</span>问题 + 文件画像　<span class="font-semibold ml-2">输出：</span>PlanDAG</div>
+                </div>
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-indigo-100">
+                    <div class="pin bg-indigo-500">LLM</div>
+                    <h4 class="text-lg font-bold text-indigo-700 mb-2">replanner</h4>
+                    <p class="text-sm text-gray-600 mb-3">DAG 卡住或某节点彻底失败时进入。接收"上一份失败计划 + 状态 + 已有摘要 + 失败原因"，被要求产出一份避开同一失败模式的新 DAG。</p>
+                    <div class="text-xs text-gray-500"><span class="font-semibold">关键差异：</span>独立于 planner 存在 —— 失败信息和原始问题需要不同的提示与反思路径。</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 2: Scheduling -->
+        <div class="mb-12">
+            <div class="flex items-center gap-3 mb-5">
+                <div class="glyph bg-violet-100 text-violet-600">📋</div>
+                <div>
+                    <h3 class="text-2xl font-bold text-gray-900">调度层 · Scheduling</h3>
+                    <p class="text-sm text-gray-500">决定"现在做哪一个"——纯代码、零 LLM。</p>
+                </div>
+            </div>
+            <div class="bg-white rounded-xl p-6 shadow-sm border border-violet-200">
+                <div class="flex items-start justify-between gap-4 mb-3">
+                    <div>
+                        <h4 class="text-lg font-bold text-violet-700 mb-1">scheduler · 整张图的"心脏"</h4>
+                        <p class="text-sm text-gray-600">不调用 LLM，只做四件事：</p>
+                    </div>
+                    <span class="badge bg-emerald-100 text-emerald-700 shrink-0">Pure Control Flow</span>
+                </div>
+                <ol class="grid md:grid-cols-2 gap-3 mt-4">
+                    <li class="flex gap-3 bg-violet-50 rounded-lg p-3">
+                        <span class="font-mono text-violet-600 font-bold">①</span>
+                        <span class="text-sm text-gray-700">挑出"依赖已满足、状态 pending"的下一个就绪节点。</span>
+                    </li>
+                    <li class="flex gap-3 bg-violet-50 rounded-lg p-3">
+                        <span class="font-mono text-violet-600 font-bold">②</span>
+                        <span class="text-sm text-gray-700">把目标 + 期望产物 + 上游依赖摘要拼成<b>聚焦提示</b>注入 executor。</span>
+                    </li>
+                    <li class="flex gap-3 bg-violet-50 rounded-lg p-3">
+                        <span class="font-mono text-violet-600 font-bold">③</span>
+                        <span class="text-sm text-gray-700">检查终止：全部完成 → reflector；卡住 → replanner。</span>
+                    </li>
+                    <li class="flex gap-3 bg-violet-50 rounded-lg p-3">
+                        <span class="font-mono text-violet-600 font-bold">④</span>
+                        <span class="text-sm text-gray-700">重置 per-node 步数计数器、刷新可视化。</span>
+                    </li>
+                </ol>
+                <div class="mt-5 p-4 bg-gradient-to-r from-violet-50 to-indigo-50 rounded-lg border-l-4 border-violet-500">
+                    <p class="text-sm text-gray-700"><b>设计动机：</b>把"挑下一步做什么"从 LLM 责任里剥离，变成确定性逻辑。既消除 LLM 的"漫游 / 跳步 / 漏做"，又让上下文窗口始终精简。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 3: Execution -->
+        <div class="mb-12">
+            <div class="flex items-center gap-3 mb-5">
+                <div class="glyph bg-fuchsia-100 text-fuchsia-600">🔧</div>
+                <div>
+                    <h3 class="text-2xl font-bold text-gray-900">执行层 · Execution</h3>
+                    <p class="text-sm text-gray-500">决定"具体怎么做"——绑定工具 + 真正接触世界。</p>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-2 gap-5">
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-fuchsia-100">
+                    <div class="pin bg-fuchsia-500">LLM</div>
+                    <h4 class="text-lg font-bold text-fuchsia-700 mb-2">executor</h4>
+                    <p class="text-sm text-gray-600 mb-3">绑定全部数据分析工具的 ChatLLM。只看到聚焦提示 + 之前几轮对话，专注于<b>当前一个 DAG 节点</b>。</p>
+                    <div class="bg-fuchsia-50 rounded-lg p-3 text-xs text-gray-700 leading-relaxed">
+                        <div><b>普通节点 →</b> <code class="text-fuchsia-700">mark_node_done</code>（带摘要）</div>
+                        <div class="mt-1"><b>最终节点 →</b> <code class="text-fuchsia-700">answer</code>（提交结果表）</div>
+                    </div>
+                    <div class="mt-3 text-xs text-gray-500">让 LLM "用工具来宣布完成"——把推进权交还代码，避免 LLM 用自然语言模糊"暗示"完成。</div>
+                </div>
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-fuchsia-100">
+                    <div class="pin bg-emerald-500">CTL</div>
+                    <h4 class="text-lg font-bold text-fuchsia-700 mb-2">tools · 标准 ToolNode</h4>
+                    <p class="text-sm text-gray-600 mb-3">执行 executor 上一轮发出的工具调用，把结果以 ToolMessage 喂回。</p>
+                    <div class="bg-emerald-50 rounded-lg p-3 text-xs text-emerald-800">
+                        🌍 这是整张图里<b>唯一真正接触外部世界</b>的节点（文件、SQL、Python 沙箱…）。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Layer 4: Supervision -->
+        <div>
+            <div class="flex items-center gap-3 mb-5">
+                <div class="glyph bg-emerald-100 text-emerald-600">🛡</div>
+                <div>
+                    <h3 class="text-2xl font-bold text-gray-900">监督与降级层 · Supervision &amp; Fallback</h3>
+                    <p class="text-sm text-gray-500">决定"出问题怎么办"——每一处可能陷入死循环的地方都有兜底。</p>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-amber-100">
+                    <div class="pin bg-amber-500">LLM</div>
+                    <h4 class="text-lg font-bold text-amber-700 mb-2">reflector</h4>
+                    <p class="text-sm text-gray-600">在 executor 提交 <code>answer</code> 后触发。检查结构 / 列数 / 行数 / 单位 / 空值 / 字符串大小写。结论 <span class="badge bg-emerald-100 text-emerald-700">OK</span> 或 <span class="badge bg-rose-100 text-rose-700">RETRY</span>。重试有上限。</p>
+                </div>
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-amber-100">
+                    <div class="pin bg-emerald-500">CTL</div>
+                    <h4 class="text-lg font-bold text-amber-700 mb-2">node_failure</h4>
+                    <p class="text-sm text-gray-600">节点超步预算后进入。做"软退避 vs 硬升级"二分：未到尝试上限 → 节点退回 pending（软重试）；超过 → 标 failed → 走 replanner。</p>
+                </div>
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-amber-100">
+                    <div class="pin bg-emerald-500">CTL</div>
+                    <h4 class="text-lg font-bold text-amber-700 mb-2">nudge</h4>
+                    <p class="text-sm text-gray-600">应对某些模型偶发"既无文本也无工具调用"的空 AIMessage（实测 Qwen via DashScope）。提醒一次，<b>不消耗</b>节点步数预算。</p>
+                </div>
+                <div class="node-card bg-white rounded-xl p-6 shadow-sm border border-amber-100">
+                    <div class="pin bg-gray-400">END</div>
+                    <h4 class="text-lg font-bold text-amber-700 mb-2">finalize</h4>
+                    <p class="text-sm text-gray-600">no-op 叶子节点，唯一作用是把控制流接到 <code>END</code>。所有"放弃 / 通过 / 预算耗尽 / 反思满意"的路径都汇聚到这里。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ASCII Topology Visual -->
+        <div class="mt-12 bg-gray-900 rounded-2xl p-8 shadow-lg overflow-x-auto">
+            <div class="text-xs uppercase tracking-widest text-gray-400 mb-3">Pipeline · DAG-driven, strict mode</div>
+            <pre class="font-mono text-sm text-gray-100 leading-relaxed">
+   planner ──▶ <span class="text-violet-300">scheduler</span> ──▶ <span class="text-fuchsia-300">executor</span> ──▶ <span class="text-emerald-300">tools</span> ──┐
+                  ▲     ▲           │ ▲                           │
+                  │     │           │ └────── <span class="text-amber-300">nudge</span> ◀────────┤  (executor empty)
+                  │     │           │                             │
+                  │     │           │  (mark_node_done) ──────────┘
+                  │     │           │
+                  │     └───────────────────────────────── ◀ ─────┘
+                  │                 │
+                  │                 └─── (answer) ──▶ <span class="text-rose-300">reflector</span> ──▶ <span class="text-gray-400">finalize</span> ──▶ END
+                  │                                    │
+                  │                                    └─ (RETRY) ─▶ scheduler
+                  │
+                  └───── <span class="text-orange-300">replanner</span> ◀── (scheduler stuck / node_failure)
+                              │
+                              └─ replan_count ≥ max ─▶ <span class="text-gray-400">finalize</span></pre>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §3 State & Data Flow ========== -->
+<section id="dataflow" class="section-anchor py-20 px-6 bg-white">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-cyan-100 text-cyan-700 mb-3">§3 · State &amp; Data Flow</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">两层状态：图状态 + 共享侧通道</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                <b>对话归对话，控制状态归控制状态。</b>把 DAG 的强类型状态从松散的消息流里独立出来，方便调度器/工具做精确判断，也方便事后导出结构化 trace。
+            </p>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-6 mb-10">
+            <div class="bg-gradient-to-br from-cyan-50 to-blue-50 rounded-2xl p-7 border border-cyan-200">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="glyph bg-cyan-500 text-white">💬</div>
+                    <div>
+                        <h3 class="text-xl font-bold text-cyan-800">LangGraph 显式状态</h3>
+                        <code class="text-xs text-cyan-700">AgentState</code>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-700 mb-4">由 <code class="text-cyan-700">add_messages</code> reducer 累加的对话流，外加几个轻量计数字段。</p>
+                <ul class="space-y-2 text-sm text-gray-700">
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>对话消息流（系统提示 / 问题 / 聚焦提示 / AIMessage / ToolMessage / 软提醒）</li>
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>反思已用次数</li>
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>空轮纠偏已用次数</li>
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>当前节点已耗费的执行步数</li>
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>待重规划原因</li>
+                    <li class="flex gap-2"><span class="text-cyan-600">▸</span>是否已最终化标志</li>
+                </ul>
+            </div>
+            <div class="bg-gradient-to-br from-violet-50 to-fuchsia-50 rounded-2xl p-7 border border-violet-200">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="glyph bg-violet-500 text-white">🗂</div>
+                    <div>
+                        <h3 class="text-xl font-bold text-violet-800">共享侧通道</h3>
+                        <code class="text-xs text-violet-700">ToolRunContext / DAGRuntimeState</code>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-700 mb-4"><code>ToolNode</code> 只能访问闭包里的对象，无法直接修改图状态——所以工具调用的副作用全部写到这里。</p>
+                <ul class="space-y-2 text-sm text-gray-700">
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>DAG 本身（节点列表 + final_node_id）</li>
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>每个节点的<b>状态</b>（pending / in_progress / done / failed）</li>
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>每个节点的<b>输出摘要</b>（被 <code>mark_node_done</code> 写、被调度器读）</li>
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>每个节点的<b>尝试次数</b></li>
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>当前焦点节点 ID / 重规划次数</li>
+                    <li class="flex gap-2"><span class="text-violet-600">▸</span>完整<b>事件审计日志</b>（trace 重建 + 可视化）</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-8 text-white shadow-lg">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="glyph bg-white/20 text-white">🔗</div>
+                <div>
+                    <h3 class="text-2xl font-bold">关键机制：上游摘要传递</h3>
+                    <p class="text-sm text-indigo-100">整个架构里最重要的<b>上下文工程决策</b>之一。</p>
+                </div>
+            </div>
+            <p class="text-indigo-100 mb-5">
+                调度器焦点新节点时，<b>只</b>会把该节点<b>直接依赖</b>的若干上游节点的"完成摘要"嵌进聚焦提示——不传完整对话历史、不传完整中间数据、不传 transitive 依赖。
+            </p>
+            <div class="grid md:grid-cols-3 gap-4">
+                <div class="bg-white/10 backdrop-blur rounded-xl p-4 border border-white/15">
+                    <div class="text-xl mb-2">🚫</div>
+                    <h4 class="font-bold mb-1">不传全部历史</h4>
+                    <p class="text-sm text-indigo-100">避免上下文爆炸；避免下游被无关细节干扰。</p>
+                </div>
+                <div class="bg-white/10 backdrop-blur rounded-xl p-4 border border-white/15">
+                    <div class="text-xl mb-2">🚫</div>
+                    <h4 class="font-bold mb-1">不传 transitive</h4>
+                    <p class="text-sm text-indigo-100">间接依赖的关键信息已经在直接依赖的摘要里被显式总结过。</p>
+                </div>
+                <div class="bg-white/10 backdrop-blur rounded-xl p-4 border border-white/15">
+                    <div class="text-xl mb-2">✅</div>
+                    <h4 class="font-bold mb-1">传"摘要"而非原始数据</h4>
+                    <p class="text-sm text-indigo-100">强迫上游显式命名 + 总结自己的产物，下游消费的是事实而非过程。</p>
+                </div>
+            </div>
+            <div class="mt-5 bg-white/10 rounded-lg p-4 border-l-4 border-amber-300">
+                <p class="text-sm text-indigo-50">
+                    <b>代价 &amp; 补救：</b>上游摘要质量直接决定下游成败，因此 prompt 强约束"摘要必须含具体路径/表名/数值"；
+                    调度器还有启发式补救——如果上游摘要里看不到任何文件路径形态的 token，就额外提醒下游先调 <code class="bg-white/20 px-1 rounded">list_context</code>。
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §4 Routing ========== -->
+<section id="routing" class="section-anchor py-20 px-6 bg-gray-50">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-rose-100 text-rose-700 mb-3">§4 · Control Flow</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">7 个路由器决定一切</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                LangGraph 的 conditional edges 让每个节点完成后都需由<b>纯函数路由器</b>决定下一站。
+                LLM 只决定"做什么内容"，<b>不决定"下一步去哪"</b>——这是整个 Agent 行为可预测、可调试、可设上限的根本原因。
+            </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-5">
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-indigo-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-indigo-700">①② planner / replanner 之后</h4>
+                    <span class="badge bg-gray-100 text-gray-600">无条件</span>
+                </div>
+                <p class="text-sm text-gray-600">→ 永远去 <b>scheduler</b>（规划完必走调度）。</p>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-violet-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-violet-700">③ scheduler 之后</h4>
+                    <span class="badge bg-rose-100 text-rose-700">4 选 1</span>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li>有重规划原因 → <b>replanner</b>（次数耗尽 → finalize）</li>
+                    <li>全部完成且已有答案 → <b>reflector</b></li>
+                    <li>全部完成但无答案 → <b>finalize</b></li>
+                    <li>正常焦点新节点 → <b>executor</b></li>
+                </ul>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-fuchsia-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-fuchsia-700">④ executor 之后</h4>
+                    <span class="badge bg-rose-100 text-rose-700">4 选 1</span>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li>有挂起工具调用 → <b>tools</b></li>
+                    <li>空轮 + nudge 还有预算 → <b>nudge</b></li>
+                    <li>空轮 + nudge 也耗尽 → <b>finalize</b></li>
+                    <li>非空 + 节点步数耗尽 → <b>node_failure</b></li>
+                </ul>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-emerald-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-emerald-700">⑤ tools 之后</h4>
+                    <span class="badge bg-rose-100 text-rose-700">4 选 1</span>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li>刚调 <code>answer</code> 且答案就位 → <b>reflector</b></li>
+                    <li>刚调 <code>mark_node_done</code> → <b>scheduler</b></li>
+                    <li>都不是 + 当前节点步数耗尽 → <b>node_failure</b></li>
+                    <li>否则 → <b>executor</b>（继续工作）</li>
+                </ul>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-amber-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-amber-700">⑥ node_failure 之后</h4>
+                    <span class="badge bg-amber-100 text-amber-700">2 选 1</span>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li>还有重规划预算 → <b>scheduler</b>（软重试 / 走 replan）</li>
+                    <li>预算耗尽且确实有失败节点 → <b>finalize</b></li>
+                </ul>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-rose-500">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-rose-700">⑦ reflector 之后</h4>
+                    <span class="badge bg-amber-100 text-amber-700">2 选 1</span>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li>OK → <b>finalize</b></li>
+                    <li>RETRY → <b>scheduler</b>（重新焦点最终节点）</li>
+                </ul>
+            </div>
+
+            <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-gray-400 md:col-span-2">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-bold text-gray-700">⑧ nudge 之后</h4>
+                    <span class="badge bg-gray-100 text-gray-600">无条件</span>
+                </div>
+                <p class="text-sm text-gray-600">→ 直接回 <b>executor</b>（nudge 本身只是一段提醒，没有分支决策）。</p>
+            </div>
+        </div>
+
+        <div class="mt-10 bg-gradient-to-r from-rose-50 to-pink-50 rounded-2xl p-6 border-l-4 border-rose-500">
+            <div class="flex items-start gap-3">
+                <div class="text-3xl">💡</div>
+                <div>
+                    <h4 class="font-bold text-rose-800 mb-1">为什么这一切要落到代码里？</h4>
+                    <p class="text-sm text-gray-700">
+                        路由器的存在让整张图能在<b>正常进展 / 软退避 / 硬升级 / 反思重试 / 重规划 / 终止</b>之间精确切换。
+                        下一步去哪由代码读"工具名 + 状态字段 + 计数器"决定，而不是 LLM 用自然语言"暗示"——
+                        所以才能给整个 Agent 设上限、能复现、能 debug。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §5 Budget / Safety Net ========== -->
+<section id="budget" class="section-anchor py-20 px-6 bg-white">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-emerald-100 text-emerald-700 mb-3">§5 · Budget &amp; Safety Net</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">四层同心圆预算</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                <b>每一处可能"陷进去"的地方都有显式预算。</b>从内到外形成四层同心保护——任何一个 LLM 失败都不能让整体卡死，每一层都要有明确的兜底路径。
+            </p>
+        </div>
+
+        <div class="bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 rounded-3xl p-8 mb-10 shadow-sm border border-emerald-100">
+            <div class="space-y-4 max-w-4xl mx-auto">
+                <div class="bg-white rounded-2xl p-6 shadow-md border-l-4 border-rose-400">
+                    <div class="flex items-start gap-4">
+                        <div class="glyph bg-rose-100 text-rose-600 shrink-0">①</div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <h4 class="text-lg font-bold text-gray-900">单工具调用层</h4>
+                                <span class="badge bg-rose-100 text-rose-700">最内圈</span>
+                            </div>
+                            <p class="text-sm text-gray-700 mb-3">检测<b>连续 N 次相同参数</b>的同一工具（典型死循环）和<b>对同一份长文档过度分页</b>（典型探索发散），在下一次 LLM 调用前注入一段<b>一次性 SystemMessage 警告</b>，引导模型换策略或提前提交。</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="badge bg-gray-100 text-gray-700">检测：相同参数重复</span>
+                                <span class="badge bg-gray-100 text-gray-700">检测：read_doc 过度分页</span>
+                                <span class="badge bg-emerald-100 text-emerald-700">介入：软提醒</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-md border-l-4 border-amber-400">
+                    <div class="flex items-start gap-4">
+                        <div class="glyph bg-amber-100 text-amber-600 shrink-0">②</div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <h4 class="text-lg font-bold text-gray-900">单节点层</h4>
+                                <span class="badge bg-amber-100 text-amber-700">两个独立维度</span>
+                            </div>
+                            <p class="text-sm text-gray-700 mb-3">每个 DAG 节点都有 <code>max_steps_per_node</code> 个 executor 回合的预算；节点本身还有 <code>max_node_attempts</code> 次"整轮重试"机会。预算用尽 → 降级到 <b>node_failure</b>，进而升级到 <b>replanner</b>。</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="badge bg-gray-100 text-gray-700">单节点回合数上限</span>
+                                <span class="badge bg-gray-100 text-gray-700">单节点重试次数上限</span>
+                                <span class="badge bg-emerald-100 text-emerald-700">介入：软重试 → replan</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-md border-l-4 border-orange-400">
+                    <div class="flex items-start gap-4">
+                        <div class="glyph bg-orange-100 text-orange-600 shrink-0">③</div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <h4 class="text-lg font-bold text-gray-900">整体规划层</h4>
+                                <span class="badge bg-orange-100 text-orange-700">任务级</span>
+                            </div>
+                            <p class="text-sm text-gray-700 mb-3"><code>max_replans</code> 限制整个任务最多被重新规划几次。一旦重规划次数耗尽且仍有节点 failed，整个任务直接 <b>finalize</b>（带失败原因）。</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="badge bg-gray-100 text-gray-700">replan 次数上限</span>
+                                <span class="badge bg-emerald-100 text-emerald-700">介入：失败收敛</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-md border-l-4 border-violet-400">
+                    <div class="flex items-start gap-4">
+                        <div class="glyph bg-violet-100 text-violet-600 shrink-0">④</div>
+                        <div class="flex-1">
+                            <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                <h4 class="text-lg font-bold text-gray-900">整体反思层</h4>
+                                <span class="badge bg-violet-100 text-violet-700">最外圈</span>
+                            </div>
+                            <p class="text-sm text-gray-700 mb-3"><code>max_reflections</code> 限制 reflector 最多让 executor <b>重交几次答案</b>。防止 reflector ↔ executor 反复弹乒乓。</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="badge bg-gray-100 text-gray-700">RETRY 次数上限</span>
+                                <span class="badge bg-emerald-100 text-emerald-700">介入：强制 finalize</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gradient-to-r from-teal-50 to-emerald-50 rounded-2xl p-7 border-l-4 border-teal-500 mb-8">
+            <div class="flex items-start gap-3 mb-3">
+                <div class="glyph bg-teal-100 text-teal-700">📐</div>
+                <div>
+                    <h4 class="text-lg font-bold text-teal-800">额外的"动态节点步数上限"</h4>
+                    <p class="text-sm text-teal-700/80">不同形态的节点天然耗费不同步数——所以预算需要因节点而异。</p>
+                </div>
+            </div>
+            <ul class="space-y-2 text-sm text-gray-700 ml-2">
+                <li class="flex gap-2"><span class="text-teal-600">▸</span>DAG 极简（≤2 节点）时，上限放宽到 <b>1.5 倍</b>——单节点天然要做更多事。</li>
+                <li class="flex gap-2"><span class="text-teal-600">▸</span>依赖项多的节点，<b>每多一个直接依赖增加固定额度</b>——交叉引用上游天然更贵。</li>
+                <li class="flex gap-2"><span class="text-teal-600">▸</span>最终节点再额外加少量额度——汇总 + 格式化通常需要更多 sanity check。</li>
+                <li class="flex gap-2"><span class="text-teal-600">▸</span>最终结果 clamp 到 <code>[base, 2×base]</code>，防止 planner 出"病态 1 巨节点 DAG"绕过预算。</li>
+            </ul>
+        </div>
+
+        <div class="bg-gradient-to-r from-rose-50 to-pink-50 rounded-2xl p-7 border-l-4 border-rose-500">
+            <div class="flex items-start gap-3">
+                <div class="text-3xl">📜</div>
+                <div>
+                    <h4 class="text-lg font-bold text-rose-800 mb-2">这套同心圆是从一次惨痛事故里反推出来的</h4>
+                    <p class="text-sm text-gray-700 leading-relaxed">
+                        早期版本因为"<b>双层重试叠加 + 无 timeout 上限 + 无步数上限</b>"导致单 task 跑到 1800 秒撞死。
+                        现在的同心预算、动态步数上限、按调用点差异化的重试策略，全都是从那次教训反推出来的——
+                        <b>任何一个 LLM 失败都不能让整体卡死，每一层都要有明确的兜底路径。</b>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §6 Anti-hallucination ========== -->
+<section id="hallucination" class="section-anchor py-20 px-6 bg-gray-50">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-amber-100 text-amber-700 mb-3">§6 · Anti-Hallucination</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">前置数据画像 —— 让规划基于事实</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                planner 和 replanner 在被调用之前，都会先<b>离线扫描任务的 <code>context/</code> 目录</b>，把真实文件清单、表名、文件头压成一份"数据集画像"，作为 HumanMessage 一并喂给规划 LLM。
+            </p>
+        </div>
+
+        <div class="grid lg:grid-cols-2 gap-6 mb-10">
+            <div class="bg-rose-50 rounded-2xl p-7 border-l-4 border-rose-500">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="glyph bg-rose-100 text-rose-600">❌</div>
+                    <h3 class="text-xl font-bold text-rose-800">没有数据画像时</h3>
+                </div>
+                <p class="text-sm text-gray-700 mb-3">早期版本里，约 <span class="text-2xl font-bold text-rose-600">80%</span> 的失败都是 planner / executor 虚构了不存在的文件路径。</p>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li class="flex gap-2"><span class="text-rose-600">▸</span>问题问"<b>data.db</b> 里的销售额"，但目录里其实只有 JSON。</li>
+                    <li class="flex gap-2"><span class="text-rose-600">▸</span>计划里写"读 <b>Patient.json</b>"，但文件其实在 <code>json/</code> 子目录下。</li>
+                    <li class="flex gap-2"><span class="text-rose-600">▸</span>SQL 用了想象出来的表名，executor 只能在 <code>no such table</code> 里反复挣扎。</li>
+                </ul>
+            </div>
+
+            <div class="bg-emerald-50 rounded-2xl p-7 border-l-4 border-emerald-500">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="glyph bg-emerald-100 text-emerald-600">✅</div>
+                    <h3 class="text-xl font-bold text-emerald-800">注入数据画像后</h3>
+                </div>
+                <p class="text-sm text-gray-700 mb-3">规划阶段就看到"真实存在的文件清单 + 它们各自长什么样"，从源头压制路径幻觉。</p>
+                <ul class="text-sm text-gray-700 space-y-1.5">
+                    <li class="flex gap-2"><span class="text-emerald-600">▸</span>目录树（含子目录前缀）</li>
+                    <li class="flex gap-2"><span class="text-emerald-600">▸</span>SQLite 库的真实表名 + CREATE TABLE 摘要</li>
+                    <li class="flex gap-2"><span class="text-emerald-600">▸</span>JSON 文件头（前 ~400 字符）</li>
+                    <li class="flex gap-2"><span class="text-emerald-600">▸</span>CSV 表头 + 前几行</li>
+                    <li class="flex gap-2"><span class="text-emerald-600">▸</span>Markdown / TXT 文件头</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="bg-gradient-to-r from-amber-50 to-yellow-50 rounded-2xl p-7 border-l-4 border-amber-500">
+            <div class="flex items-start gap-3">
+                <div class="text-3xl">🔄</div>
+                <div>
+                    <h4 class="text-lg font-bold text-amber-800 mb-2">replanner 也会拿一份<b>最新</b>的画像</h4>
+                    <p class="text-sm text-gray-700 leading-relaxed">
+                        因为很多时候重规划的根因就是"路径错了 / 表名错了"——必须基于事实重新出计划，而不是基于 LLM 的记忆。
+                        画像作为"<b>规划阶段的事实地基</b>"，确保每一次出计划都能扎根在确定性的现实之上。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §7 Case Studies — 6 真实失败模式 ========== -->
+<section id="cases" class="section-anchor py-20 px-6 bg-white">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-pink-100 text-pink-700 mb-3">§7 · Case Studies</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">每一个节点背后，都站着一次真实的失败</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                所有看起来繁琐的节点、路由器、计数器，背后对应的几乎都是过往某次具体的失败模式。下面是 6 个最具代表性的"<b>失败 → 架构补丁</b>"对子。
+            </p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex flex-wrap gap-2 justify-center mb-8">
+            <button onclick="showCase('case1', this)" class="tab-btn active px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">① 路径幻觉</button>
+            <button onclick="showCase('case2', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">② 死循环</button>
+            <button onclick="showCase('case3', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">③ 节点超步</button>
+            <button onclick="showCase('case4', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">④ 1800s 超时</button>
+            <button onclick="showCase('case5', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">⑤ 空 AIMessage</button>
+            <button onclick="showCase('case6', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200">⑥ 格式错答</button>
+        </div>
+
+        <!-- Case 1 -->
+        <div id="case1" class="tab-content active">
+            <div class="bg-gradient-to-br from-rose-50 via-pink-50 to-orange-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-rose-100 text-rose-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">① 路径 / 表名幻觉</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            早期版本里约 <b>80% 的失败</b> 都是 planner / executor 虚构了不存在的文件路径或表名——
+                            问"<code>data.db</code> 里的销售额"但目录里只有 JSON；写"读 <code>Patient.json</code>"但文件其实在 <code>json/</code> 子目录下；SQL 用了想象出来的表名，executor 在 <code>no such table</code> 里反复挣扎。
+                        </p>
+                        <div class="bg-white/60 rounded-lg p-4 text-xs text-gray-700">
+                            <div class="font-semibold text-rose-700 mb-2">📉 失败现场</div>
+                            <code class="block text-rose-700">FileNotFoundError: data.db</code>
+                            <code class="block text-rose-700 mt-1">no such table: customers</code>
+                            <code class="block text-rose-700 mt-1">Missing context asset: Patient.json</code>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">前置数据画像</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            planner 调用前先<b>离线扫描</b> <code>context/</code> 目录，拼一份紧凑画像：目录树 + SQLite 真实表名 + JSON/CSV 头 + 文档头，作为 HumanMessage 一并喂入。replanner 同样会拿一份<b>最新</b>画像。
+                        </p>
+                        <div class="bg-white rounded-lg p-4 text-xs text-gray-700 border border-emerald-200">
+                            <div class="font-semibold text-emerald-700 mb-2">✅ 修复后的 prompt 片段（示意）</div>
+                            <pre class="font-mono text-[11px] leading-relaxed whitespace-pre-wrap">Files under context/:
+  [DIR ] json/
+  [FILE] json/Patient.json (12,847 bytes)
+  [FILE] doc/Laboratory.md (2,031 bytes)
+File previews:
+### json/Patient.json (json)
+Head: { "patients": [{ "id": "P001", ...</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Case 2 -->
+        <div id="case2" class="tab-content">
+            <div class="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-amber-100 text-amber-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">② 重复参数 / 过度分页死循环</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            典型 <b>task_80</b>：executor 连续 4 次用<b>完全相同的参数</b>调 <code>query_dataframe</code>，烧掉 ~22 步预算却没拿到任何新信息。
+                            另一种是 <b>task_344 / 352 / 418</b>：每轮变一点 offset / grep / slice 调 <code>read_doc</code>，但永远不收敛，8-12 次后被节点预算硬杀掉。
+                        </p>
+                        <div class="bg-white/60 rounded-lg p-4 text-xs text-gray-700">
+                            <div class="font-semibold text-amber-700 mb-2">📉 失败模式</div>
+                            <ul class="space-y-1">
+                                <li>• 同一工具 + 同一参数 N 次 → "再调一次结果会不一样"幻觉</li>
+                                <li>• 长文档过度分页 → 探索发散，不愿提交部分结果</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">单工具调用层软提醒</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            executor 节点在每次调用 LLM 前做两类检测：①<b>连续 3 次相同参数</b>同一工具；②<b>4+ 次 read_doc</b>。命中则注入一段一次性 SystemMessage，强制要求换策略或<b>立即提交当前最佳部分结果</b>。检测有"已经警告过则跳过"的去重逻辑，避免反复刷屏。
+                        </p>
+                        <div class="bg-white rounded-lg p-4 text-xs text-gray-700 border border-emerald-200">
+                            <div class="font-semibold text-emerald-700 mb-2">✅ 注入的提醒（节选）</div>
+                            <p class="text-[11px] italic">"You have called <code>query_dataframe</code> with IDENTICAL arguments three turns in a row. Repeating will not return different data. You MUST (a) change at least one parameter, (b) switch to a different tool, or (c) stop exploring and call <code>answer</code> / <code>mark_node_done</code> with your best current result right now."</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Case 3 -->
+        <div id="case3" class="tab-content">
+            <div class="bg-gradient-to-br from-orange-50 via-amber-50 to-rose-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-orange-100 text-orange-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">③ 节点超步、不愿提交</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            <b>task_396 / task_418</b> 之类的失败：executor 已经走到第 25 / 30 步还在用 <code>execute_python</code> 漫游探索，宁愿继续看代码也不愿调 <code>mark_node_done</code> / <code>answer</code> 提交"次优但能用"的结果。
+                            上下文越来越长，最终被节点预算硬杀，整轮工作付之一炬。
+                        </p>
+                        <div class="bg-white/60 rounded-lg p-4 text-xs text-gray-700">
+                            <div class="font-semibold text-orange-700 mb-2">📉 失败模式</div>
+                            <p>"提交意愿不足"——LLM 把"还能再看一眼"误当作"还应该再看一眼"，错失提交时机。</p>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">步数预警 + 软重试 + replan 升级</h3>
+                        <ul class="space-y-2 text-sm text-gray-700 mb-4">
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span><b>预警阶段：</b>步数到达 70% 时注入"低预算"提醒，要求立即提交当前最好的结果。</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span><b>软重试：</b>仍然超步则进 <code>node_failure</code>，节点退回 pending，重新焦点一次（让 executor 拿干净对话再来一次）。</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span><b>硬升级：</b>累计尝试到上限 → 标 failed → 升级到 replanner，让另一个 LLM 视角换计划。</li>
+                        </ul>
+                        <div class="bg-white rounded-lg p-4 text-xs text-gray-600 border border-emerald-200">
+                            动态步数上限：依赖项多的节点 +3/dep；最终节点额外 +2；DAG ≤ 2 节点时 ×1.5。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Case 4 -->
+        <div id="case4" class="tab-content">
+            <div class="bg-gradient-to-br from-red-50 via-rose-50 to-pink-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-red-100 text-red-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">④ 1800 秒超时撞死</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            最惨痛的事故：单 task 跑到 1800 秒撞死。<b>根因是双层重试叠加</b>——外层 5×、内层 2×、再 + 60s timeout，单次卡顿被放大成 (1+2)×(1+5)×60 ≈ 数百秒；
+                            同时 client 端 timeout 异常被无脑重试，慢请求重试只会更慢，<b>30s 累加成 90s</b>。
+                            后来又观察到：planner 失败 = 全死、executor 失败 = 由外层兜底、reflector 失败 = 完全无伤——三者重要性差 100×，却共享同一份重试预算。
+                        </p>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">差异化重试 + Timeout 不重试</h3>
+                        <table class="w-full text-xs text-left mb-4">
+                            <thead class="bg-emerald-100 text-emerald-800">
+                                <tr><th class="p-2">调用点</th><th class="p-2">重要性</th><th class="p-2">重试次数</th></tr>
+                            </thead>
+                            <tbody class="bg-white">
+                                <tr class="border-b"><td class="p-2 font-semibold">planner</td><td class="p-2">致命</td><td class="p-2">2</td></tr>
+                                <tr class="border-b"><td class="p-2 font-semibold">executor</td><td class="p-2">外层兜底</td><td class="p-2">0</td></tr>
+                                <tr><td class="p-2 font-semibold">reflector</td><td class="p-2">无伤</td><td class="p-2">0</td></tr>
+                            </tbody>
+                        </table>
+                        <ul class="space-y-1.5 text-sm text-gray-700">
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>客户端 timeout 一律不重试（慢请求重试还是会慢）</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>5xx / 429 才重试，且优先读 <code>Retry-After</code> 头</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>OpenAI SDK 的 <code>max_retries</code> 强制设为 0，避免双层叠加</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>四层同心圆预算从根上限制总调用数</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Case 5 -->
+        <div id="case5" class="tab-content">
+            <div class="bg-gradient-to-br from-cyan-50 via-sky-50 to-blue-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-cyan-100 text-cyan-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">⑤ 空 AIMessage 模型怪癖</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            实测 Qwen via DashScope 的 OpenAI 兼容端点，会偶发输出"<b>既无 text 也无 tool_calls</b>"的空 AIMessage——明明任务还远未完成，模型却"无话可说"。
+                            如果直接当成"工作完成"会提前终止；如果当成"普通回合"则会消耗节点步数预算，几次空轮就把正常工具回合挤出预算。
+                        </p>
+                        <div class="bg-white/60 rounded-lg p-4 text-xs text-gray-700">
+                            <div class="font-semibold text-cyan-700 mb-2">📉 失败现场</div>
+                            <code class="block">AIMessage(content='', tool_calls=[])  ← 直接放过会终止</code>
+                            <code class="block mt-1">连续 3 次空轮 → 节点预算耗尽 → finalize</code>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">nudge 节点 + 步数豁免</h3>
+                        <ul class="space-y-2 text-sm text-gray-700 mb-4">
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>路由器检测到空轮且 nudge 还有预算 → 进 <code>nudge</code> 节点。</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>nudge 注入一段明确提醒（"你必须要么调工具、要么提交完成"），然后直接回 executor。</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>关键设计：<b>空轮不消耗节点步数预算</b>——它只是模型怪癖，不能让正常工具回合"被挤掉"。</li>
+                            <li class="flex gap-2"><span class="text-emerald-600">▸</span>nudge 自身次数有上限（<code>max_idle_nudges</code>），超过则降级到 finalize。</li>
+                        </ul>
+                        <div class="bg-white rounded-lg p-4 text-xs text-emerald-800 border border-emerald-200">
+                            💡 这是一个<b>专门针对模型怪癖的轻量补丁层</b>——隔离质量问题，不污染主流程预算。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Case 6 -->
+        <div id="case6" class="tab-content">
+            <div class="bg-gradient-to-br from-violet-50 via-fuchsia-50 to-purple-50 rounded-2xl p-8 shadow-sm">
+                <div class="grid lg:grid-cols-2 gap-8">
+                    <div>
+                        <span class="badge bg-violet-100 text-violet-700 mb-2">Failure Pattern</span>
+                        <h3 class="text-2xl font-bold mb-3">⑥ "对了但格式错"的零分答</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            grader 是<b>字节级</b>比较 + 列签名匹配——所以下面这些"实际算对了的答案"会拿 0 分：
+                        </p>
+                        <ul class="space-y-1.5 text-sm text-gray-700">
+                            <li class="flex gap-2"><span class="text-violet-600">▸</span>金标 <code>"52.17391304347826"</code>，提交 <code>"52.17"</code>（被 round 了）</li>
+                            <li class="flex gap-2"><span class="text-violet-600">▸</span>金标 <code>""</code>，提交 <code>"None"</code> / <code>"NaN"</code> / <code>"&lt;NA&gt;"</code></li>
+                            <li class="flex gap-2"><span class="text-violet-600">▸</span>"how many X"问题，提交了 N 行明细而不是 1 行 COUNT</li>
+                            <li class="flex gap-2"><span class="text-violet-600">▸</span>金标 1 列，提交 4 列（多列被惩罚）</li>
+                            <li class="flex gap-2"><span class="text-violet-600">▸</span>日期 <code>"March 1, 2024"</code> 而不是 <code>"2024-03-01"</code></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <span class="badge bg-emerald-100 text-emerald-700 mb-2">Architectural Patch</span>
+                        <h3 class="text-2xl font-bold mb-3">reflector + RETRY 闭环</h3>
+                        <p class="text-sm text-gray-700 leading-relaxed mb-4">
+                            <code>answer</code> 提交后<b>不直接</b>finalize，而是先进 reflector：用独立 LLM 扫一遍 6 个维度（列数 / 行数 / 单位 / 空值 / 字符串大小写 / 数值精度），
+                            发现"对了但格式错"就发 <code>RETRY: &lt;一句话指令&gt;</code>，重置最终节点状态、回到 scheduler、让 executor 重交一次。
+                        </p>
+                        <div class="bg-white rounded-lg p-4 text-xs text-gray-700 border border-emerald-200">
+                            <div class="font-semibold text-emerald-700 mb-2">✅ RETRY 指令样例</div>
+                            <code class="block text-violet-700 mt-1">RETRY: aggregate the result (COUNT/SUM/AVG) and submit one row</code>
+                            <code class="block text-violet-700 mt-1">RETRY: drop extra `id` and `description` columns to match the gold's 1-column shape</code>
+                            <code class="block text-violet-700 mt-1">RETRY: don't round; submit str(raw_value) for full precision</code>
+                        </div>
+                        <div class="mt-3 text-xs text-gray-500">RETRY 次数受 <code>max_reflections</code> 上限保护，防止 reflector ↔ executor 弹乒乓。</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showCase(caseId, btn) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(caseId).classList.add('active');
+            btn.classList.add('active');
+        }
+    </script>
+</section>
+
+<!-- ========== §8 Design Motives ========== -->
+<section id="takeaways" class="section-anchor py-20 px-6 bg-gray-50">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-indigo-100 text-indigo-700 mb-3">§8 · Design Motives</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">五句话归纳设计动机</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                可以把这个架构的全部设计动机归纳成 5 句话——每一句都对应一类失败模式。
+            </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-5">
+            <div class="bg-white rounded-2xl p-7 shadow-sm border-t-4 border-indigo-500 hover:shadow-md transition">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="text-3xl font-extrabold text-indigo-500">①</div>
+                    <h3 class="text-xl font-bold text-gray-900">把规划与执行解耦</h3>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    一个 LLM 通看全局产出 DAG，另一个 LLM 在每节点里只看局部聚焦提示。
+                    同时缓解了"<b>上下文过长 → 注意力涣散</b>"和"<b>多步任务 → 漏步跳步</b>"两类问题。
+                </p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-7 shadow-sm border-t-4 border-violet-500 hover:shadow-md transition">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="text-3xl font-extrabold text-violet-500">②</div>
+                    <h3 class="text-xl font-bold text-gray-900">把状态机从 LLM 手里拿走</h3>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    推进 / 终止 / 重试 / 重规划全部交给纯函数路由器和工具触发，LLM 只通过 <code>mark_node_done</code> / <code>answer</code> 这种<b>控制流工具</b>来"申请"状态迁移，
+                    不能用自然语言含糊地推进流程。
+                </p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-7 shadow-sm border-t-4 border-fuchsia-500 hover:shadow-md transition">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="text-3xl font-extrabold text-fuchsia-500">③</div>
+                    <h3 class="text-xl font-bold text-gray-900">把"中间产物"从对话里抽出来变成显式摘要</h3>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    每个节点用一段精炼摘要喂下游，而不是把整段历史、整张表都塞过去。
+                    这是节点间协作能 scale 到 6 个子任务<b>而不上下文爆炸</b>的关键。
+                </p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-7 shadow-sm border-t-4 border-emerald-500 hover:shadow-md transition">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="text-3xl font-extrabold text-emerald-500">④</div>
+                    <h3 class="text-xl font-bold text-gray-900">每一层都有降级路径</h3>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    工具死循环 → 软提醒；节点超步 → 软重试；节点彻底失败 → replan；replan 用尽 → finalize。
+                    <b>整个图没有任何一个状态会陷在那里出不来。</b>
+                </p>
+            </div>
+
+            <div class="bg-white rounded-2xl p-7 shadow-sm border-t-4 border-amber-500 hover:shadow-md transition md:col-span-2">
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="text-3xl font-extrabold text-amber-500">⑤</div>
+                    <h3 class="text-xl font-bold text-gray-900">数据先于推理</h3>
+                </div>
+                <p class="text-sm text-gray-700 leading-relaxed">
+                    让 planner 在落笔前就看到真实文件画像，用确定性的事实压制 LLM 的幻觉倾向；让 reflector 在最终交付前再做一次结构性体检，
+                    把"<b>对了但格式错</b>"的低级失败拦下来。事实在前，推理在后。
+                </p>
+            </div>
+        </div>
+
+        <!-- Observability sidebar -->
+        <div class="mt-12 grid lg:grid-cols-3 gap-5">
+            <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
+                <div class="text-2xl mb-3">🔁</div>
+                <h4 class="text-lg font-bold mb-2">差异化重试</h4>
+                <p class="text-sm text-slate-300 leading-relaxed">planner / executor / reflector 三种 LLM 调用对成败影响差 100×，配置不同的重试预算与退避策略；client timeout 一律不重试，5xx/429 才重试，并按 <code class="bg-slate-700 px-1 rounded">Retry-After</code> 头精确退避。</p>
+            </div>
+            <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
+                <div class="text-2xl mb-3">🎬</div>
+                <h4 class="text-lg font-bold mb-2">DAG 实时可视化</h4>
+                <p class="text-sm text-slate-300 leading-relaxed">每次 plan / replan / 节点状态变化、节点失败都触发一次 SVG 渲染（如配置了输出目录），让调试者能在事后回放<b>整张 DAG 的演化过程</b>。</p>
+            </div>
+            <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white">
+                <div class="text-2xl mb-3">📑</div>
+                <h4 class="text-lg font-bold mb-2">trace 与对话流分离</h4>
+                <p class="text-sm text-slate-300 leading-relaxed">"对话消息（给 LLM 看）"与"步骤记录（给人和评测系统看）"在架构层面分开——后者从前者 + 事件日志重新组装，<b>prompt 工程改变不会破坏 trace 兼容性</b>。</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== §9 vs ReAct ========== -->
+<section id="compare" class="section-anchor py-20 px-6 bg-white">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+            <span class="badge bg-rose-100 text-rose-700 mb-3">§9 · vs Traditional ReAct</span>
+            <h2 class="text-4xl font-bold text-gray-900 mb-4">与传统 ReAct Agent 的关键差异</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">
+                这套架构本质上是把"通用 LLM Agent"折弯成了一个<b>针对数据分析任务深度加固的工业级流水线</b>。
+            </p>
+        </div>
+
+        <div class="overflow-x-auto rounded-2xl border border-gray-200 shadow-sm">
+            <table class="w-full text-sm bg-white">
+                <thead class="bg-gradient-to-r from-indigo-600 to-violet-600 text-white">
+                    <tr>
+                        <th class="p-4 text-left font-semibold">维度</th>
+                        <th class="p-4 text-left font-semibold w-2/5">传统 ReAct</th>
+                        <th class="p-4 text-left font-semibold w-2/5">本架构</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">任务分解</td>
+                        <td class="p-4 text-rose-700">隐式（LLM 自己边想边做）</td>
+                        <td class="p-4 text-emerald-700">显式（planner 先产出 DAG）</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">状态推进</td>
+                        <td class="p-4 text-rose-700">LLM 用自然语言决定何时停</td>
+                        <td class="p-4 text-emerald-700">工具调用 + 路由器决定</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">上下文</td>
+                        <td class="p-4 text-rose-700">单条不断膨胀的对话</td>
+                        <td class="p-4 text-emerald-700">每节点局部聚焦提示 + 上游摘要</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">失败恢复</td>
+                        <td class="p-4 text-rose-700">通常无</td>
+                        <td class="p-4 text-emerald-700">三层（节点软重试 / replan / 反思 RETRY）</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">预算控制</td>
+                        <td class="p-4 text-rose-700">通常单一 max_steps</td>
+                        <td class="p-4 text-emerald-700">节点级 / 任务级 / 反思级 / 重规划级<b>四层独立</b></td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">抗幻觉</td>
+                        <td class="p-4 text-rose-700">依赖 prompt</td>
+                        <td class="p-4 text-emerald-700">前置数据画像 + reflector 后置审阅</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-4 font-semibold text-gray-700">可观测性</td>
+                        <td class="p-4 text-rose-700">仅消息流</td>
+                        <td class="p-4 text-emerald-700">消息流 + DAG 事件流 + DAG 实时 SVG</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Closing pull quote -->
+        <div class="mt-10 bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 rounded-2xl p-8 text-white shadow-lg">
+            <div class="flex items-start gap-4">
+                <div class="text-5xl leading-none opacity-50">"</div>
+                <div>
+                    <p class="text-lg leading-relaxed">
+                        所有看起来繁琐的节点、路由器、计数器，背后对应的几乎都是<b>过往某次具体的失败模式</b>。
+                    </p>
+                    <p class="text-sm text-indigo-100 mt-3">— 这就是从 ReAct 到 LangGraph DAG Agent 的演化全部意义所在。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ========== Footer ========== -->
+<footer class="bg-gray-900 text-gray-300 py-12 px-6">
+    <div class="max-w-7xl mx-auto">
+        <div class="grid md:grid-cols-3 gap-8 mb-8">
+            <div>
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-white font-bold">L</div>
+                    <span class="font-bold text-white">LangGraph Agent</span>
+                </div>
+                <p class="text-sm text-gray-400 leading-relaxed">
+                    DAG-driven multi-role data analysis agent for the DABench baseline.
+                </p>
+            </div>
+            <div>
+                <h4 class="font-bold text-white mb-3">参考</h4>
+                <ul class="text-sm space-y-1.5">
+                    <li>📄 <code class="text-indigo-300">docs/agengt_architecture.md</code></li>
+                    <li>💻 <code class="text-indigo-300">src/data_agent_baseline/agents/langgraph_agent.py</code></li>
+                    <li>🧰 <code class="text-indigo-300">src/data_agent_baseline/tools/langchain_tools.py</code></li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="font-bold text-white mb-3">关键概念</h4>
+                <div class="flex flex-wrap gap-2">
+                    <span class="badge bg-indigo-500/20 text-indigo-200">DAG Planning</span>
+                    <span class="badge bg-violet-500/20 text-violet-200">Focused Prompt</span>
+                    <span class="badge bg-fuchsia-500/20 text-fuchsia-200">Control-flow Tools</span>
+                    <span class="badge bg-emerald-500/20 text-emerald-200">Concentric Budgets</span>
+                    <span class="badge bg-amber-500/20 text-amber-200">Anti-hallucination</span>
+                </div>
+            </div>
+        </div>
+        <div class="pt-6 border-t border-gray-800 text-xs text-gray-500 flex flex-wrap justify-between gap-3">
+            <span>Generated via paper-summarizer skill · Tailwind CDN + Inter</span>
+            <span>架构文档基于源码 <code>langgraph_agent.py</code> 综合提炼，仅讨论架构与动机，不涉及代码细节</span>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>

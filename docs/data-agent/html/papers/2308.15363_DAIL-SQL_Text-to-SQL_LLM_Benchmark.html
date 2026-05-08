@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DAIL-SQL: Text-to-SQL Empowered by LLMs · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2308.15363_DAIL-SQL_Text-to-SQL_LLM_Benchmark.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2308.15363 · VLDB 2024</div>
+    <h1>Text-to-SQL Empowered by LLMs: A Benchmark Evaluation (DAIL-SQL)</h1>
+    <div class="meta">
+      <span>👥 Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, Jingren Zhou</span>
+      <span>🏛️ 阿里巴巴达摩院</span>
+      <span>📅 2023.08</span>
+    </div>
+    <p class="tagline">
+      LLM 时代第一份系统化的 Text-to-SQL prompt engineering benchmark：
+      把 prompt 设计拆为 <strong>问题表示 / 示例选择 / 示例组织 / 提示组件</strong> 四个正交维度，
+      首次给出"如何最优地构造 SQL prompt"的工程答案。
+      DAIL-SQL（其最优组合）以 <strong>86.6% Spider 测试集 EX</strong> 刷新当时榜单。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">5</div><div class="label">问题表示风格</div></div>
+      <div class="stat"><div class="value">4</div><div class="label">示例选择策略</div></div>
+      <div class="stat"><div class="value">2</div><div class="label">示例组织方式</div></div>
+      <div class="stat"><div class="value">86.6%</div><div class="label">Spider Test EX</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 当时方法的混乱</h3>
+      <p>2023 年中，"用 LLM 做 Text-to-SQL"已被 OpenAI Demo、ChatGPT-SQL、Codex、C3-SQL 等多种方法实现，但这些工作有如下问题：</p>
+      <div class="grid grid-2">
+        <div>
+          <h4>① Prompt 风格参差不齐</h4>
+          <p>有的用 NL 描述 schema，有的用 CREATE 语句，有的用类 markdown 表格，缺乏受控对比。</p>
+        </div>
+        <div>
+          <h4>② 示例选择"凭感觉"</h4>
+          <p>没人系统比较过"按问题相似度选 vs. 按 SQL 相似度选" 哪个真的更好。</p>
+        </div>
+        <div>
+          <h4>③ Few-shot 中是否给 SQL？</h4>
+          <p>有的工作只给问题不给 SQL，有的两者都给，无定论。</p>
+        </div>
+        <div>
+          <h4>④ Token 经济性被忽视</h4>
+          <p>大 schema 让 prompt 动辄数万 token，但很少有人讨论"在等准确率前提下 token 最少的设计"。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：把 prompt 设计形式化为 4 个正交维度</h3>
+      <p>论文用 <strong>"工程实证 + 控制变量"</strong> 的方法，把"最优 prompt 怎么写"变成可被科学回答的问题：</p>
+      <ul>
+        <li>固定 LLM、固定 schema、固定 benchmark；</li>
+        <li>每次只变一个维度（如示例选择策略），跑全集；</li>
+        <li>得到全局最优组合 = <strong>DAIL-SQL</strong>。</li>
+      </ul>
+    </div>
+
+    <div class="pipeline">
+      <span class="step">问题表示 (Q-Repr)</span>
+      <span class="arrow">⊗</span>
+      <span class="step">示例选择 (Selection)</span>
+      <span class="arrow">⊗</span>
+      <span class="step">示例组织 (Organization)</span>
+      <span class="arrow">⊗</span>
+      <span class="step">提示组件 (Components)</span>
+      <span class="arrow">→</span>
+      <span class="step">最优组合 = DAIL-SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：四维度系统评估</h2>
+
+      <div class="tabs" id="m-tabs">
+        <button class="tab-btn" data-tab="m1">① 问题表示</button>
+        <button class="tab-btn" data-tab="m2">② 示例选择</button>
+        <button class="tab-btn" data-tab="m3">③ 示例组织</button>
+        <button class="tab-btn" data-tab="m4">④ DAIL-SQL 最优组合</button>
+
+        <div class="tab-content" id="m1">
+          <h4>5 种问题表示</h4>
+          <ul>
+            <li><strong>Basic Prompt (BS<sub>P</sub>)</strong>：自然语言描述 schema + 问题</li>
+            <li><strong>Text Representation (TR)</strong>：在 BS<sub>P</sub> 上加规则提示</li>
+            <li><strong>OpenAI Demo (OD)</strong>：OpenAI 官方文档示例风格</li>
+            <li><strong>Code Representation (CR)</strong> ⭐：用 SQL <code>CREATE TABLE</code> 语句作为 schema 表示</li>
+            <li><strong>Alpaca SFT Prompt (AS)</strong>：指令式 SFT 模板</li>
+          </ul>
+          <p>实验显示 <strong>CR 一骑绝尘</strong>：因为 GPT-4 训练数据中存在大量 CREATE 语句 + SELECT 模式，"用 SQL 解释 SQL"是最自然的对齐方式。</p>
+<pre><code class="language-sql">/* Code Representation 风格 */
+CREATE TABLE singer (
+    singer_id INT PRIMARY KEY,
+    name VARCHAR(50),
+    country VARCHAR(50),
+    age INT
+);
+CREATE TABLE song (
+    song_id INT PRIMARY KEY,
+    singer_id INT REFERENCES singer(singer_id),
+    title VARCHAR(100)
+);
+-- 问题: How many singers from France are older than 30?
+SELECT</code></pre>
+        </div>
+
+        <div class="tab-content" id="m2">
+          <h4>4 种示例选择策略</h4>
+          <ol>
+            <li><strong>Random</strong>：从训练集随机抽 k 个</li>
+            <li><strong>Question Similarity (QS)</strong>：用 sentence-BERT 取问题最相近的 k 个</li>
+            <li><strong>Masked Question Similarity (MQS)</strong>：先把领域词 mask 掉再算相似度</li>
+            <li><strong>Query Similarity (DAIL Selection)</strong> ⭐：用<strong>预生成的 SQL skeleton</strong>计算相似度（如 <code>SELECT _ FROM _ WHERE _ GROUP BY _</code>）</li>
+          </ol>
+          <p>关键发现：<strong>SQL skeleton 相似度 &gt; 问题相似度 &gt; 随机</strong>。"问题表面相似但 SQL 结构不同"反而是误导性示例（如两道都问 "how many" 但一道是 COUNT，一道是 SUM）。</p>
+        </div>
+
+        <div class="tab-content" id="m3">
+          <h4>2 种示例组织方式</h4>
+          <ul>
+            <li><strong>Full-Information Organization (FI)</strong>：每个示例都给 <code>schema + 问题 + SQL</code></li>
+            <li><strong>SQL-Only Organization (SO)</strong>：只给 <code>问题 + SQL</code>，schema 在 prompt 头部一次性出现</li>
+          </ul>
+          <p>论文证明 <strong>FI &gt; SO</strong>：每个示例都带自己的 schema，能让 LLM 学到"如何把 schema 与 SQL 关联"，而不仅仅是"如何把问题映射到 SQL 模板"。</p>
+        </div>
+
+        <div class="tab-content" id="m4">
+          <h4>DAIL-SQL = 全局最优组合</h4>
+<pre><code class="language-text">问题表示:    Code Representation (CR)
+示例选择:    Query Similarity (基于 SQL skeleton)
+示例组织:    Full-Information (每例完整 schema+问题+SQL)
+提示组件:    + 显式注释关键约束 (如 PK/FK)
+LLM:        GPT-4
+Few-shot:   k=5 ~ 9</code></pre>
+          <p>这一组合最终在 Spider 测试集达到 <strong>86.6% EX</strong>，超过此前所有 ICL/FT 方法。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>方法论价值</strong>：DAIL-SQL 不是"提出新算法"，而是"系统化回答了一系列工程问题"。在 LLM 时代，这种"严谨控制变量的 prompt 实证研究"本身就是稀缺的科学贡献。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>评测设置</h3>
+        <ul>
+          <li>Benchmark：Spider, Spider-SYN, Spider-Realistic, BIRD</li>
+          <li>LLM：GPT-4, GPT-3.5-turbo, Vicuna-33B, LLaMA-70B</li>
+          <li>每个维度独立 grid search，跑完全部 5 × 4 × 2 = 40 组合</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评测指标</h3>
+        <ul>
+          <li>EX (Execution Accuracy)</li>
+          <li>EM (Exact Match)</li>
+          <li>VES (Valid Efficiency Score, BIRD)</li>
+          <li>Token 消耗（首份系统化 token 经济性分析）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">Spider Test EX</div>
+          <div class="value">86.6<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:86.6%;"></div></div>
+          <div class="delta up">官方公布：刷新 Spider 排行榜</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider-dev EX (GPT-4)</div>
+          <div class="value">83.5<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:83.5%;"></div></div>
+          <div class="delta up">+11.2pt vs zero-shot 72.3%</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider-Realistic EX</div>
+          <div class="value">76.0<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:76%;"></div></div>
+          <div class="delta up">+9.5pt vs 66.5%（DAIL Organization 加成）</div>
+        </div>
+      </div>
+
+      <h3>DAIL Organization 增益（论文 Table）</h3>
+      <table class="cmp">
+        <thead><tr><th>设置</th><th>Spider-dev EX</th><th>Spider-Realistic EX</th></tr></thead>
+        <tbody>
+          <tr><td>GPT-4 zero-shot</td><td>72.3%</td><td>66.5%</td></tr>
+          <tr><td>+ DAIL Organization</td><td><strong>83.5%</strong></td><td><strong>76.0%</strong></td></tr>
+          <tr><td>提升</td><td>+11.2pt</td><td>+9.5pt</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：DAIL-SQL VLDB 2024 论文（<a href="https://www.vldb.org/pvldb/vol17/p1132-gao.pdf" target="_blank">PVLDB Vol.17</a>）。Spider Test EX 86.6% 由作者提交至 Spider 排行榜得到。</p>
+
+      <h3>开源 LLM 表现（论文 Section 5）</h3>
+      <p>论文还在 Vicuna-33B、LLaMA-2、CodeLlama 等开源 LLM 上重复实验。综合定性结论：</p>
+      <ul>
+        <li>开源 LLM 整体显著落后于 GPT-4，验证 ICL 路线对底座 LLM 能力有强依赖；</li>
+        <li>同样 prompt 设置下，code-tuned LLM（如 CodeLlama）通常优于 chat-tuned 同尺寸模型；</li>
+        <li>更大尺寸 / 更新版本的开源模型可以缩短与 GPT-4 的差距，但当时未消除。</li>
+      </ul>
+      <p style="font-size:.85rem; color:var(--text-soft);">具体逐模型 EX 数字详见 DAIL-SQL 论文 Table 7（不同开源 LLM × 不同 prompt 设置）。</p>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 案例研究</h2>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">Case 1: 表示风格的差异</button>
+      <button class="tab-btn" data-tab="c2">Case 2: SQL skeleton 选例的优势</button>
+      <button class="tab-btn" data-tab="c3">Case 3: Token 经济性分析</button>
+
+      <div class="tab-content" id="c1">
+        <h4>表示风格的 5 种对比（论文 Section 3）</h4>
+        <p>DAIL-SQL 系统比较了 5 种 schema/问题表示：Basic、Text Representation、OpenAI Demonstration、Code Representation (CR)、Alpaca SFT。论文 Table 2 给出每种风格在 GPT-4 下的 EX。</p>
+        <p>定性结论：</p>
+        <ul>
+          <li><strong>Code Representation（CR）最优</strong>：用 <code>CREATE TABLE</code> 文本表示 schema、把问题作为 SQL 注释；与 LLM 训练分布更一致。</li>
+          <li><strong>Basic / 自然语言风格</strong>：让 LLM 在 schema 描述与 SQL 生成之间做隐式翻译，比 CR 准确率明显更低。</li>
+          <li><strong>OpenAI Demonstration 风格</strong>：介于二者之间。</li>
+        </ul>
+        <p style="font-size:.85rem; color:var(--text-soft);">这是首批系统化论证"<strong>用 SQL 解释 SQL</strong>"显著优于"用自然语言解释 SQL"的实验性工作之一。</p>
+      </div>
+
+      <div class="tab-content" id="c2">
+        <h4>SQL skeleton 选例的优势（论文 Section 4）</h4>
+        <p>DAIL-SQL 比较了 4 种 example selection 策略：</p>
+        <ul>
+          <li><strong>Random</strong>：随机选 few-shot</li>
+          <li><strong>Question Similarity (QS)</strong>：基于问题文本嵌入相似度</li>
+          <li><strong>Masked Question Similarity (MQS)</strong>：把字面常量 mask 后再算相似度</li>
+          <li><strong>DAIL Selection</strong>：先用 base prompt 预生成 SQL skeleton，再按 SQL skeleton 相似度选例</li>
+        </ul>
+        <p>论文 Table 3 实证：DAIL Selection &gt; MQS &gt; QS &gt; Random。原因是问题文本相似不代表 SQL 结构相似（"how many books"和"how many cars"问法相似但 SQL skeleton 可能完全不同），<strong>结构相似才是 ICL 真正受益的相似</strong>。这一发现也被 MAC-SQL 等后续工作沿用。</p>
+      </div>
+
+      <div class="tab-content" id="c3">
+        <h4>Token 经济性</h4>
+        <p>论文专门用一节讨论 token 消耗：相比逐步 CoT 一次输出 7-8K token 的做法，DAIL-SQL 选择 SQL-Only Organization + 最少必要 schema，<strong>在保持高准确率前提下显著降低 token 数</strong>，论文指出这是它能在 GPT-4 高 API 成本下落地的关键工程优势。</p>
+        <p>注：论文未公布精确平均 token 数，但讨论了不同 prompt 组件的 token 占比及对成本的影响。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>用 SQL 解释 SQL</strong>：CR 表示利用了 LLM 训练分布</li>
+            <li><strong>结构相似 &gt; 语义相似</strong>：选例时 SQL skeleton 比问题文本更有效</li>
+            <li><strong>Full-Info 让 LLM 学到映射，不是模板</strong></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>首份 LLM-based NL2SQL 的 prompt benchmark</li>
+            <li>提出 SQL-skeleton-based example selection（被 DIN-SQL/MAC-SQL 复用）</li>
+            <li>开源代码 + 全部 prompt 模板</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 影响</h3>
+          <ul>
+            <li>VLDB 2024 收录</li>
+            <li>成为后续 NL2SQL 论文标准基线</li>
+            <li>多家开源 SQL Agent（LangChain SQL Agent, LlamaIndex）默认 prompt 风格借鉴 CR</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>纯 prompt 路线在 BIRD 上很快被多 Agent 方法超越</li>
+            <li>无 schema linking 模块 → 大型 schema 失效</li>
+            <li>无 self-correction → 错误一次定终身</li>
+            <li>未触及交互、歧义、效率维度</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2308.15363" target="_blank">arXiv:2308.15363</a></li>
+      <li>💻 代码：<a href="https://github.com/BeachWang/DAIL-SQL" target="_blank">github.com/BeachWang/DAIL-SQL</a></li>
+      <li>📑 关联：DIN-SQL（被它超越）· MAC-SQL（继承其示例选择策略）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · DAIL-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

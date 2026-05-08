@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>boost-agent 架构总览 · Deep Technical Summary</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        :root {
+            --primary-from: #667eea;
+            --primary-to: #764ba2;
+        }
+        html { scroll-behavior: smooth; }
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+        .gradient-primary { background: linear-gradient(135deg, var(--primary-from) 0%, var(--primary-to) 100%); }
+        .gradient-text { background: linear-gradient(135deg, var(--primary-from) 0%, var(--primary-to) 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+        .ascii-box { font-family: 'JetBrains Mono', monospace; white-space: pre; line-height: 1.45; font-size: 0.78rem; }
+        .card-hover { transition: transform .2s, box-shadow .2s; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(0,0,0,.08); }
+        .tab-btn.active { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        details > summary { cursor: pointer; list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+        .progress-bar-bg { background: #e5e7eb; border-radius: 9999px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; border-radius: 9999px; }
+        nav.sticky-nav { backdrop-filter: saturate(180%) blur(12px); }
+        @media print {
+            nav.sticky-nav, .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+    <!-- ============== Top Navigation ============== -->
+    <nav class="sticky-nav sticky top-0 z-50 bg-white/80 border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center text-white font-bold text-sm">b</div>
+                <span class="font-bold text-gray-900">boost-agent · Architecture</span>
+            </div>
+            <div class="hidden md:flex items-center gap-5 text-sm text-gray-600">
+                <a href="#hero" class="hover:text-indigo-600">概览</a>
+                <a href="#problem" class="hover:text-indigo-600">问题与洞察</a>
+                <a href="#layers" class="hover:text-indigo-600">分层</a>
+                <a href="#agent-core" class="hover:text-indigo-600">DAG 核心</a>
+                <a href="#tools" class="hover:text-indigo-600">工具</a>
+                <a href="#runner" class="hover:text-indigo-600">调度</a>
+                <a href="#entrypoint" class="hover:text-indigo-600">接入</a>
+                <a href="#timeline" class="hover:text-indigo-600">时序</a>
+                <a href="#philosophy" class="hover:text-indigo-600">哲学</a>
+                <a href="#takeaways" class="hover:text-indigo-600">Insights</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ============== Hero ============== -->
+    <section id="hero" class="gradient-primary text-white">
+        <div class="max-w-7xl mx-auto px-6 py-20">
+            <div class="inline-flex items-center gap-2 bg-white/15 backdrop-blur-sm rounded-full px-4 py-1.5 text-sm font-medium mb-6">
+                <span class="w-2 h-2 rounded-full bg-green-300"></span>
+                Architecture Deep-Dive · Level 3 Technical Analysis
+            </div>
+            <h1 class="text-5xl md:text-6xl font-extrabold leading-tight mb-6">
+                boost-agent <span class="opacity-70">架构总览</span>
+            </h1>
+            <p class="text-xl md:text-2xl text-white/90 max-w-4xl mb-10 leading-relaxed">
+                一套基于 <span class="font-semibold underline decoration-white/40">LangGraph DAG 编排</span> +
+                <span class="font-semibold underline decoration-white/40">多轮投票</span> +
+                <span class="font-semibold underline decoration-white/40">失败重试</span>
+                的 KDD Cup 2026 DataAgent-Bench 参赛 Agent。以"保底文件"为评测对接契约，把模型的随机性压成稳定可投票的多份候选。
+            </p>
+
+            <!-- Key Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-10">
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/20">
+                    <div class="text-3xl font-bold">6</div>
+                    <div class="text-sm text-white/80 mt-1">分层（Layered Architecture）</div>
+                </div>
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/20">
+                    <div class="text-3xl font-bold">9</div>
+                    <div class="text-sm text-white/80 mt-1">DAG 节点（StateGraph）</div>
+                </div>
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/20">
+                    <div class="text-3xl font-bold">12</div>
+                    <div class="text-sm text-white/80 mt-1">工具（4 类角色）</div>
+                </div>
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/20">
+                    <div class="text-3xl font-bold">6</div>
+                    <div class="text-sm text-white/80 mt-1">层失败兜底（漏斗式收敛）</div>
+                </div>
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-5 border border-white/20">
+                    <div class="text-3xl font-bold">5</div>
+                    <div class="text-sm text-white/80 mt-1">核心设计原则</div>
+                </div>
+            </div>
+
+            <!-- Core thesis card -->
+            <div class="mt-12 bg-white/10 backdrop-blur-sm rounded-2xl p-8 border border-white/20">
+                <div class="text-sm uppercase tracking-wider text-white/70 mb-2">Core Thesis · 一句话</div>
+                <p class="text-2xl md:text-3xl font-semibold leading-snug">
+                    以 <span class="text-yellow-200">LangGraph DAG</span> 为推理骨架，以 <span class="text-yellow-200">多轮投票 + 失败重试</span> 为稳定性手段，以 <span class="text-yellow-200">"保底文件"</span> 为评测对接契约的数据分析 Agent。
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Footer ============== -->
+    <footer class="bg-gray-900 text-gray-400 mt-24">
+        <div class="max-w-7xl mx-auto px-6 py-10 grid md:grid-cols-3 gap-8">
+            <div>
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center text-white font-bold">b</div>
+                    <span class="font-bold text-white">boost-agent</span>
+                </div>
+                <p class="text-sm">KDD Cup 2026 DataAgent-Bench 参赛方案。本页基于 <code class="font-mono text-yellow-300">docs/架构.md</code> 自动生成。</p>
+            </div>
+            <div>
+                <div class="text-white font-semibold mb-3">相关文档</div>
+                <ul class="text-sm space-y-1">
+                    <li><a class="hover:text-white" href="architecture.md">architecture.md（含代码细节）</a></li>
+                    <li><a class="hover:text-white" href="架构.md">架构.md（架构层文字版）</a></li>
+                    <li><a class="hover:text-white" href="07-langgraph-architecture.md">07-langgraph-architecture.md</a></li>
+                </ul>
+            </div>
+            <div>
+                <div class="text-white font-semibold mb-3">生成信息</div>
+                <ul class="text-sm space-y-1">
+                    <li>Skill: <code class="font-mono text-yellow-300">paper-summarizer</code></li>
+                    <li>Level: 3 · Deep Technical Analysis</li>
+                    <li>Source: <code class="font-mono text-yellow-300">docs/架构.md</code> (593 lines)</li>
+                </ul>
+            </div>
+        </div>
+        <div class="border-t border-gray-800 py-4 text-center text-xs">
+            Generated by Aone Copilot · paper-summarizer skill
+        </div>
+    </footer>
+
+    <!-- ============== JS ============== -->
+    <script>
+        // Tabs
+        function showTab(groupId, tabId) {
+            const group = document.querySelector(`[data-tab-group="${groupId}"]`);
+            if (!group) return;
+            group.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            group.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            group.querySelector(`[data-tab-btn="${tabId}"]`).classList.add('active');
+            group.querySelector(`[data-tab-content="${tabId}"]`).classList.add('active');
+        }
+        // Init highlight.js
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.hljs) hljs.highlightAll();
+            // animate progress bars
+            document.querySelectorAll('.progress-bar-fill[data-target]').forEach(el => {
+                const target = el.getAttribute('data-target');
+                requestAnimationFrame(() => { el.style.width = target; });
+            });
+        });
+    </script>
+</body>
+</html>
+
+    <!-- ============== Section: Problem & Insight ============== -->
+    <section id="problem" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Problem &amp; Insight</div>
+                <h2 class="text-4xl font-bold mb-4">为什么需要这套架构？</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">理解 boost-agent 的所有设计取舍，必须先理解评测平台对 Agent 加的四条硬约束。</p>
+            </div>
+
+            <!-- The Gap -->
+            <div class="bg-gradient-to-r from-red-50 to-orange-50 rounded-2xl p-8 mb-10 border-l-4 border-red-500">
+                <h3 class="text-2xl font-bold text-red-700 mb-6 flex items-center gap-3">
+                    <span class="w-9 h-9 rounded-full bg-red-500 text-white flex items-center justify-center text-sm font-bold">!</span>
+                    四条评测硬约束
+                </h3>
+                <div class="grid md:grid-cols-2 gap-5">
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                        <div class="flex items-start gap-3">
+                            <div class="text-2xl">📊</div>
+                            <div>
+                                <div class="font-bold text-gray-900 mb-1">打分规则：列签名集合匹配</div>
+                                <p class="text-sm text-gray-600 leading-relaxed">忽略列名与列顺序，但对多余列施加线性惩罚。
+                                    <code class="font-mono text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Score = max(0, Recall − λ × extra/predicted)</code>
+                                </p>
+                                <p class="text-xs text-gray-500 mt-2">⇒ "多答列" / "漏答列" / "格式错位" 都直接扣分；"列名漂移" 不扣分。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                        <div class="flex items-start gap-3">
+                            <div class="text-2xl">⏱️</div>
+                            <div>
+                                <div class="font-bold text-gray-900 mb-1">运行时预算：硬性 timeout 包裹</div>
+                                <p class="text-sm text-gray-600 leading-relaxed">外层 <code class="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">timeout</code> 套整个容器，到时先 SIGTERM 后 SIGKILL，进程随时可能被强行收尾。</p>
+                                <p class="text-xs text-gray-500 mt-2">⇒ "保底文件必须在任意瞬间存在"，不能依赖跑完后统一拷贝。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                        <div class="flex items-start gap-3">
+                            <div class="text-2xl">📁</div>
+                            <div>
+                                <div class="font-bold text-gray-900 mb-1">目录契约：固定路径 + 单一文件名</div>
+                                <p class="text-sm text-gray-600 leading-relaxed">评测平台只挂载固定输入 / 输出路径，且只读输出路径下一个特定文件名的答案文件。</p>
+                                <p class="text-xs text-gray-500 mt-2">⇒ 多轮投票的中间候选不能"污染"评测路径。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                        <div class="flex items-start gap-3">
+                            <div class="text-2xl">🌐</div>
+                            <div>
+                                <div class="font-bold text-gray-900 mb-1">运行期不可联网</div>
+                                <p class="text-sm text-gray-600 leading-relaxed">除调用 <code class="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">MODEL_API_URL</code> 外，镜像内不允许任何对外网络访问，否则按违规处理。</p>
+                                <p class="text-xs text-gray-500 mt-2">⇒ API Key 不落镜像、运行期清空 pip 镜像源。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- The Insight: 五大设计原则 -->
+            <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl p-8 mb-10 border-l-4 border-emerald-500">
+                <h3 class="text-2xl font-bold text-emerald-700 mb-6 flex items-center gap-3">
+                    <span class="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm font-bold">✓</span>
+                    五条核心设计原则
+                </h3>
+                <div class="grid md:grid-cols-5 gap-4">
+                    <div class="bg-white rounded-xl p-5 shadow-sm">
+                        <div class="text-3xl mb-2">🧩</div>
+                        <div class="font-bold mb-1">DAG 驱动</div>
+                        <p class="text-xs text-gray-600">用结构化子任务图替代单循环，避免长上下文中迷失。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm">
+                        <div class="text-3xl mb-2">🛡️</div>
+                        <div class="font-bold mb-1">兜底层叠</div>
+                        <p class="text-xs text-gray-600">节点 → Replan → 反思 → 投票 → 救援，每层有限上限。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm">
+                        <div class="text-3xl mb-2">💾</div>
+                        <div class="font-bold mb-1">保底输出</div>
+                        <p class="text-xs text-gray-600">保底文件一旦写出立刻同步，后续轮只能在保底之上做加法。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm">
+                        <div class="text-3xl mb-2">🎯</div>
+                        <div class="font-bold mb-1">反幻觉</div>
+                        <p class="text-xs text-gray-600">规划前注入真实目录清单 / Schema / 头部样本。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm">
+                        <div class="text-3xl mb-2">🔢</div>
+                        <div class="font-bold mb-1">签名规范化</div>
+                        <p class="text-xs text-gray-600">投票与本地评分都基于"列签名"集合，自动忽略噪声差异。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logic Pipeline -->
+            <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl p-8">
+                <h3 class="text-xl font-bold text-indigo-700 mb-6">Logic Pipeline · 从约束到方案</h3>
+                <div class="flex items-center gap-3 overflow-x-auto pb-2">
+                    <div class="flex-shrink-0 bg-white px-5 py-4 rounded-xl shadow-sm text-center min-w-[150px]">
+                        <div class="text-xs uppercase text-gray-500 tracking-wider">Current State</div>
+                        <div class="font-bold text-gray-900 mt-1">长 ReAct 循环</div>
+                        <div class="text-xs text-gray-500 mt-1">长上下文迷失</div>
+                    </div>
+                    <div class="text-indigo-400 text-2xl flex-shrink-0">→</div>
+                    <div class="flex-shrink-0 bg-white px-5 py-4 rounded-xl shadow-sm text-center min-w-[150px]">
+                        <div class="text-xs uppercase text-gray-500 tracking-wider">Identified Gap</div>
+                        <div class="font-bold text-gray-900 mt-1">幻觉 + 卡死</div>
+                        <div class="text-xs text-gray-500 mt-1">+ 评测中途被杀</div>
+                    </div>
+                    <div class="text-indigo-400 text-2xl flex-shrink-0">→</div>
+                    <div class="flex-shrink-0 bg-white px-5 py-4 rounded-xl shadow-sm text-center min-w-[150px]">
+                        <div class="text-xs uppercase text-gray-500 tracking-wider">Key Insight</div>
+                        <div class="font-bold text-emerald-700 mt-1">短焦点接力</div>
+                        <div class="text-xs text-gray-500 mt-1">+ 保底语义</div>
+                    </div>
+                    <div class="text-indigo-400 text-2xl flex-shrink-0">→</div>
+                    <div class="flex-shrink-0 bg-white px-5 py-4 rounded-xl shadow-sm text-center min-w-[150px]">
+                        <div class="text-xs uppercase text-gray-500 tracking-wider">Proposed Solution</div>
+                        <div class="font-bold text-indigo-700 mt-1">DAG + 投票 + 重试</div>
+                        <div class="text-xs text-gray-500 mt-1">+ Entrypoint 同步</div>
+                    </div>
+                    <div class="text-indigo-400 text-2xl flex-shrink-0">→</div>
+                    <div class="flex-shrink-0 bg-white px-5 py-4 rounded-xl shadow-sm text-center min-w-[150px]">
+                        <div class="text-xs uppercase text-gray-500 tracking-wider">Impact</div>
+                        <div class="font-bold text-purple-700 mt-1">稳定可恢复</div>
+                        <div class="text-xs text-gray-500 mt-1">且可调试</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Layered Architecture ============== -->
+    <section id="layers" class="py-20 bg-gray-50">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Layered Architecture</div>
+                <h2 class="text-4xl font-bold mb-4">六层分层架构</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">每一层只负责一个明确职责，层与层之间通过<strong>明确契约</strong>解耦——目录结构、文件名约定、不可变状态字段、强校验工具签名。</p>
+            </div>
+
+            <div class="grid lg:grid-cols-3 gap-8">
+                <!-- Left: ASCII layered map -->
+                <div class="lg:col-span-1">
+                    <div class="bg-gray-900 text-gray-100 rounded-2xl p-5 shadow-lg sticky top-24">
+                        <div class="text-xs uppercase tracking-wider text-gray-400 mb-3">分层视图</div>
+                        <div class="ascii-box text-emerald-300">┌─────────────────────────┐
+│ Docker Entrypoint 接入层│ ← 评测平台
+├─────────────────────────┤
+│ CLI / 配置层            │
+├─────────────────────────┤
+│ 数据集层                │
+├─────────────────────────┤
+│ 运行调度层               │
+│ Runner / Vote / Retry / │
+│ Score                   │
+├─────────────────────────┤
+│ Agent 核心层             │
+│ LangGraph DAG (9 节点)  │
+├─────────────────────────┤
+│ 工具层 (12 工具 / 4 类) │
+└─────────────────────────┘</div>
+                        <div class="mt-5 text-xs text-gray-400 leading-relaxed">
+                            数据流自上而下；调度层是核心枢纽，向上对接 CLI、向下编排 Agent。
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: layer cards -->
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-rose-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">① Docker / Entrypoint 接入层</h3>
+                            <span class="text-xs bg-rose-100 text-rose-700 px-2 py-1 rounded-full font-medium">边界层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">评测平台契约的唯一对接点。后台周期性原子拷贝保底文件到评测目录、屏蔽多轮中间产物、信号 trap 收尾。<strong>Runner 与评测路径完全解耦。</strong></p>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-orange-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">② CLI / 配置层</h3>
+                            <span class="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">入口层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">命令分发统一入口；YAML + 环境变量展开（API Key 不落镜像）；不可变配置对象向下传递；轻命令懒加载、快速启动。</p>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-amber-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">③ 数据集层</h3>
+                            <span class="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium">契约层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">题目目录索引；<strong>"上下文目录路径"是整个工具沙箱的根</strong>；不可变 Schema 跨层传递；字段漂移立刻 fail-fast；稳定排序便于回归对比。</p>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-emerald-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">④ 运行调度层（Runner / Vote / Retry / Score）</h3>
+                            <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">编排层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">每题一进程隔离 + 硬超时；多轮调度遵循"保底文件契约"；签名规范化投票；失败重试 Pass；本地 self-eval。<strong>把模型随机性压成可投票的多份候选。</strong></p>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-indigo-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">⑤ Agent 核心层（LangGraph DAG）</h3>
+                            <span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-medium">推理层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">9 节点状态机：Planner / Scheduler / Executor / Tools / Reflector / Replanner / NodeFailure / Nudge / Finalize。双通道状态架构（messages 主通道 + ToolRunContext 侧通道）。</p>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-5 shadow-sm card-hover border-l-4 border-purple-500">
+                        <div class="flex items-start justify-between mb-2">
+                            <h3 class="font-bold text-lg">⑥ 工具层</h3>
+                            <span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-medium">能力层</span>
+                        </div>
+                        <p class="text-sm text-gray-600">四类角色：文件类 / 探索类 / 计算类 / 控制流类。统一受路径沙箱保护（路径逃逸阻断 + 缺失文件友好提示）。强 schema 输入。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Agent Core (LangGraph DAG) ============== -->
+    <section id="agent-core" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Agent Core · LangGraph DAG</div>
+                <h2 class="text-4xl font-bold mb-4">推理骨架：9 节点状态机</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">把 ReAct 单循环重构成多节点协作的有限状态机：每个节点只看自己的 goal 与上游事实摘要，避免长上下文中迷失。</p>
+            </div>
+
+            <!-- 9 nodes grouped -->
+            <div class="grid lg:grid-cols-3 gap-6 mb-12">
+                <!-- 主流程节点 -->
+                <div class="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-2xl p-6 border border-indigo-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-indigo-700">🎯 主流程节点</h3>
+                        <span class="text-xs bg-indigo-500 text-white px-2 py-1 rounded-full">4</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-indigo-700">Planner 规划器</div>
+                            <p class="text-xs text-gray-600 mt-1">题目入口，仅运行一次。注入 Dataset Profile 后产出结构化子任务 DAG。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-indigo-700">Scheduler 调度器</div>
+                            <p class="text-xs text-gray-600 mt-1">挑选下一个 ready 节点，构造 Focused Prompt（只含上游事实摘要）。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-indigo-700">Executor 执行器</div>
+                            <p class="text-xs text-gray-600 mt-1">在当前聚焦节点内调 LLM，决定调工具 / 写文本 / 结束当前节点。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-indigo-700">Tools 工具节点</div>
+                            <p class="text-xs text-gray-600 mt-1">实际执行工具调用；副作用通过返回值或侧通道写入。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 校验与终止节点 -->
+                <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-6 border border-emerald-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-emerald-700">✅ 校验 / 终止节点</h3>
+                        <span class="text-xs bg-emerald-500 text-white px-2 py-1 rounded-full">2</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-emerald-700">Reflector 反思器</div>
+                            <p class="text-xs text-gray-600 mt-1">提交最终答案后做四维校验（结构 / 冗余列 / 聚合 / 格式），输出 OK 或 RETRY。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-emerald-700">Finalize 终止节点</div>
+                            <p class="text-xs text-gray-600 mt-1">触发整张图的退出，是 END 之前的唯一占位节点。</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 p-3 bg-emerald-100/50 rounded-lg text-xs text-emerald-800">
+                        💡 Reflector 的 RETRY 不回到 Executor，而是回到 Scheduler 重新聚焦终节点，复用统一入口避免状态错乱。
+                    </div>
+                </div>
+
+                <!-- 兜底节点 -->
+                <div class="bg-gradient-to-br from-orange-50 to-red-50 rounded-2xl p-6 border border-orange-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-orange-700">🛡️ 兜底节点</h3>
+                        <span class="text-xs bg-orange-500 text-white px-2 py-1 rounded-full">3</span>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-orange-700">Replanner 重规划</div>
+                            <p class="text-xs text-gray-600 mt-1">原 DAG 无法继续推进时触发；吃前一版计划 + 失败原因，重新出 DAG。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-orange-700">NodeFailure 节点级兜底</div>
+                            <p class="text-xs text-gray-600 mt-1">单节点步数耗尽时触发；软重试当前节点或上抛触发 Replan。</p>
+                        </div>
+                        <div class="bg-white rounded-lg p-3 shadow-sm">
+                            <div class="font-bold text-sm text-orange-700">Nudge 轻量唤醒</div>
+                            <p class="text-xs text-gray-600 mt-1">执行器返回空响应时触发，注入简短提示让 LLM 重新发声。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Routing diagram -->
+            <div class="bg-gray-900 text-gray-100 rounded-2xl p-8 mb-12 shadow-xl">
+                <div class="text-sm uppercase tracking-wider text-gray-400 mb-4">DAG 路由关系（条件路由）</div>
+                <div class="ascii-box text-emerald-300 overflow-x-auto">                                  ┌──────────────────────────────┐
+                                  ▼                              │
+   START → Planner → Scheduler → Executor → Tools ──────────────┤
+              ▲          │          │ ▲                         │
+              │          │          │ └── Nudge ◀────(空响应)───┤
+              │          │          │                           │
+              │          │          └── (提交 answer) → Reflector
+              │          │                                  │
+              │          │                                  ├─ OK    → Finalize → END
+              │          │                                  └─ RETRY → Scheduler
+              │          │
+              │          └── 无 ready 节点 / 节点失败 → NodeFailure → Scheduler
+              │                                              │
+              │                                              ▼
+              │                                        （重试预算耗尽？）
+              │                                              │
+              │                                              ▼
+              └─────────────────────── Replanner ────────────┘
+                          （Replan 预算耗尽 → Finalize → END）</div>
+                <div class="mt-5 grid md:grid-cols-3 gap-3 text-xs">
+                    <div class="bg-gray-800 rounded-lg p-3">
+                        <div class="text-yellow-300 font-bold mb-1">Tools 路由分流</div>
+                        <p class="text-gray-300">调"提交答案" → Reflector；调"标记节点完成" → Scheduler；调普通数据工具 → Executor。</p>
+                    </div>
+                    <div class="bg-gray-800 rounded-lg p-3">
+                        <div class="text-yellow-300 font-bold mb-1">RETRY 路径</div>
+                        <p class="text-gray-300">Reflector 的 RETRY 走 Scheduler 而非 Executor，复用"清空当前节点状态再进入"的统一入口。</p>
+                    </div>
+                    <div class="bg-gray-800 rounded-lg p-3">
+                        <div class="text-yellow-300 font-bold mb-1">两层兜底</div>
+                        <p class="text-gray-300">NodeFailure 是节点级软重试；Replanner 是计划级重写。前者优先，后者兜底。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dual channel state -->
+            <div class="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl p-8 mb-12 border border-purple-100">
+                <h3 class="text-2xl font-bold text-purple-800 mb-4">🔀 双通道状态架构</h3>
+                <p class="text-gray-700 mb-6">LangGraph 原生 <code class="font-mono text-xs bg-white px-1.5 py-0.5 rounded">messages</code> 通道无法承载"标记节点完成 / 提交最终答案"这类控制流副作用。架构层面引入第二条通道 <strong>ToolRunContext</strong>，把消息流与控制流彻底分离。</p>
+
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-blue-500">
+                        <div class="text-xs uppercase tracking-wider text-blue-600 font-semibold mb-2">主通道</div>
+                        <h4 class="font-bold text-lg mb-3">messages（LLM 对话流）</h4>
+                        <ul class="text-sm space-y-2 text-gray-700">
+                            <li>• <code class="font-mono text-xs bg-blue-50 px-1.5 py-0.5 rounded">HumanMessage</code> · 用户 / Scheduler 注入</li>
+                            <li>• <code class="font-mono text-xs bg-blue-50 px-1.5 py-0.5 rounded">AIMessage</code> · LLM 输出</li>
+                            <li>• <code class="font-mono text-xs bg-blue-50 px-1.5 py-0.5 rounded">ToolMessage</code> · 工具结果回传</li>
+                        </ul>
+                        <p class="text-xs text-gray-500 mt-3">由 reducer 自动追加，不可绕过。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-purple-500">
+                        <div class="text-xs uppercase tracking-wider text-purple-600 font-semibold mb-2">侧通道</div>
+                        <h4 class="font-bold text-lg mb-3">ToolRunContext（DAG 状态 / 控制流）</h4>
+                        <ul class="text-sm space-y-2 text-gray-700">
+                            <li>• DAG 拓扑 + 节点状态</li>
+                            <li>• 节点输出摘要（事实事实）</li>
+                            <li>• 最终答案对象</li>
+                            <li>• 历史所有提交答案（可回溯）</li>
+                        </ul>
+                        <p class="text-xs text-gray-500 mt-3">per-task 隔离；控制流工具直接读写。</p>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-3 gap-3 mt-6 text-sm">
+                    <div class="bg-white/70 rounded-lg p-3">
+                        <div class="font-bold text-purple-700 mb-1">per-task 隔离</div>
+                        <p class="text-xs text-gray-600">每题独立 context；任意两题状态完全隔离。</p>
+                    </div>
+                    <div class="bg-white/70 rounded-lg p-3">
+                        <div class="font-bold text-purple-700 mb-1">强校验入口</div>
+                        <p class="text-xs text-gray-600">控制流工具入参严格校验；非法尝试立刻打回。</p>
+                    </div>
+                    <div class="bg-white/70 rounded-lg p-3">
+                        <div class="font-bold text-purple-700 mb-1">下一拍可感知</div>
+                        <p class="text-xs text-gray-600">无需事件总线；scheduler 下次执行就能看到新状态。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5 子机制（Tabs） -->
+            <h3 class="text-2xl font-bold mb-2 text-center">五大子机制 · 让 DAG 工作的关键设计</h3>
+            <p class="text-center text-gray-600 mb-8">从反幻觉到自我保护，每一个子机制都对应一类历史回归经验</p>
+            <div data-tab-group="submech">
+                <div class="flex flex-wrap justify-center gap-2 mb-6">
+                    <button class="tab-btn active px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-indigo-400 transition" data-tab-btn="m1" onclick="showTab('submech','m1')">① Dataset Profile</button>
+                    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-indigo-400 transition" data-tab-btn="m2" onclick="showTab('submech','m2')">② Focused Prompt</button>
+                    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-indigo-400 transition" data-tab-btn="m3" onclick="showTab('submech','m3')">③ 三层自我保护</button>
+                    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-indigo-400 transition" data-tab-btn="m4" onclick="showTab('submech','m4')">④ 差异化重试</button>
+                    <button class="tab-btn px-4 py-2 rounded-lg text-sm font-medium bg-white border border-gray-200 hover:border-indigo-400 transition" data-tab-btn="m5" onclick="showTab('submech','m5')">⑤ 四维语义校验</button>
+                </div>
+
+                <!-- m1 -->
+                <div class="tab-content active" data-tab-content="m1">
+                    <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+                        <div class="grid md:grid-cols-2 gap-8">
+                            <div>
+                                <h4 class="text-xl font-bold mb-3">Dataset Profile · 反幻觉的核心</h4>
+                                <p class="text-sm text-gray-600 mb-4">实测中最大的失败模式：模型凭空捏造文件路径（题目说有 sqlite，模型直接读 <code class="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">data.db</code>，但真实文件叫 <code class="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">db/main.sqlite</code>）。</p>
+                                <div class="bg-emerald-50 rounded-lg p-4 border-l-4 border-emerald-500">
+                                    <div class="text-sm font-bold text-emerald-800 mb-2">解决方案：规划前注入真实文件清单</div>
+                                    <ul class="text-xs text-gray-700 space-y-1">
+                                        <li>• 真实存在的目录与文件清单（含路径与大小）</li>
+                                        <li>• 每个 SQLite 文件的全部表结构</li>
+                                        <li>• 每个文档 / CSV / JSON 的头部样本</li>
+                                        <li>• Prompt 中强制要求："只允许引用 profile 中出现的文件"</li>
+                                    </ul>
+                                </div>
+                                <p class="text-xs text-indigo-600 mt-4">⇒ 把"反幻觉"从"提示词约束"升级为"模型根本看不到不存在的路径"的<strong>结构性保证</strong>。</p>
+                            </div>
+                            <div class="bg-gray-900 text-gray-100 rounded-xl p-5 ascii-box overflow-x-auto">Files under context/:
+  [DIR ] db/
+  [FILE] db/main.sqlite (45123 bytes)
+  [FILE] doc/Laboratory.md (8201 bytes)
+
+File previews:
+db/main.sqlite (sqlite, 3 tables;
+  pass exactly `db/main.sqlite`):
+  - table `patients`: ...
+  - table `labs`: ...
+  - table `visits`: ...
+
+doc/Laboratory.md (text):
+Head:
+  # Laboratory Reference
+  ...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- m2 -->
+                <div class="tab-content" data-tab-content="m2">
+                    <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+                        <h4 class="text-xl font-bold mb-3">Focused Prompt · 长上下文压缩</h4>
+                        <p class="text-sm text-gray-600 mb-6">DAG 各节点之间不直接共享对话历史。每次 Scheduler 选中一个节点时，构造的"聚焦提示"<strong>只包含</strong>：</p>
+                        <div class="grid md:grid-cols-2 gap-6">
+                            <div class="bg-emerald-50 rounded-xl p-5 border-l-4 border-emerald-500">
+                                <div class="font-bold text-emerald-700 mb-2">✅ 进入 LLM 输入</div>
+                                <ul class="text-sm text-gray-700 space-y-1">
+                                    <li>• 当前节点的 goal 与期望输出</li>
+                                    <li>• 上游节点的 1-3 句事实摘要</li>
+                                    <li>• 控制流工具调用建议</li>
+                                </ul>
+                            </div>
+                            <div class="bg-red-50 rounded-xl p-5 border-l-4 border-red-500">
+                                <div class="font-bold text-red-700 mb-2">❌ 不进入 LLM 输入</div>
+                                <ul class="text-sm text-gray-700 space-y-1">
+                                    <li>• 上游节点的工具调用日志</li>
+                                    <li>• 上游节点的中间消息历史</li>
+                                    <li>• 上游节点的失败重试记录</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <p class="text-sm text-indigo-600 mt-6">⇒ 把"长上下文 ReAct"变成"短上下文焦点接力"，让一道题的总 token 消耗保持在可控范围，模型在每个节点都"轻装上阵"。</p>
+                    </div>
+                </div>
+
+                <!-- m3 -->
+                <div class="tab-content" data-tab-content="m3">
+                    <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+                        <h4 class="text-xl font-bold mb-3">Executor 三层自我保护</h4>
+                        <p class="text-sm text-gray-600 mb-6">执行器位于 LLM 自由度最高的位置。为防止常见失败模式吃光预算，外面包了三层观测器 + 一个特殊补丁：</p>
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div class="bg-amber-50 rounded-lg p-4 border-l-4 border-amber-500">
+                                <div class="font-bold text-amber-800 mb-1">🔁 重复调用检测</div>
+                                <p class="text-xs text-gray-700">连续几轮用完全相同参数调同一工具时，注入强提示让模型立刻提交当前结果或更换工具/参数。</p>
+                            </div>
+                            <div class="bg-amber-50 rounded-lg p-4 border-l-4 border-amber-500">
+                                <div class="font-bold text-amber-800 mb-1">📄 长文档过用检测</div>
+                                <p class="text-xs text-gray-700">连续多次调用文档读取工具（哪怕参数不同）时，建议改用列目录、受限 Python 或直接结束当前节点。</p>
+                            </div>
+                            <div class="bg-amber-50 rounded-lg p-4 border-l-4 border-amber-500">
+                                <div class="font-bold text-amber-800 mb-1">⏰ 步数预算软警告</div>
+                                <p class="text-xs text-gray-700">节点内步数接近上限时注入"立刻提交当前结果，哪怕是部分答案"的提示。</p>
+                            </div>
+                            <div class="bg-emerald-50 rounded-lg p-4 border-l-4 border-emerald-500">
+                                <div class="font-bold text-emerald-800 mb-1">💨 空响应不计步</div>
+                                <p class="text-xs text-gray-700">LLM 偶发返回空内容时不计入步数预算，由 Nudge 节点低成本恢复，避免几次空响应就把节点预算耗光。</p>
+                            </div>
+                        </div>
+                        <p class="text-sm text-indigo-600 mt-6">⇒ 这一层是"LLM 自由度"与"硬约束"之间的<strong>中间层防护</strong>，把模型的常见反模式拦截在它造成实质损失前。</p>
+                    </div>
+                </div>
+
+                <!-- m4 -->
+                <div class="tab-content" data-tab-content="m4">
+                    <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+                        <h4 class="text-xl font-bold mb-3">差异化 LLM 重试策略</h4>
+                        <p class="text-sm text-gray-600 mb-6">所有 LLM 调用走同一统一入口，但按调用点采用不同的重试 profile。底层 SDK 内置重试被显式关闭，避免双层叠加。</p>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="bg-gray-100 text-gray-700">
+                                        <th class="px-4 py-3 text-left">调用点</th>
+                                        <th class="px-4 py-3 text-left">重试策略</th>
+                                        <th class="px-4 py-3 text-left">设计依据</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-200">
+                                    <tr>
+                                        <td class="px-4 py-3 font-bold text-indigo-700">Planner</td>
+                                        <td class="px-4 py-3">多次重试 + 指数退避</td>
+                                        <td class="px-4 py-3 text-gray-600">失败将导致整个 task 死，必须给重试机会</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-bold text-indigo-700">Executor</td>
+                                        <td class="px-4 py-3">不重试</td>
+                                        <td class="px-4 py-3 text-gray-600">失败有节点级 / 计划级 / 投票级多层外层兜底</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-bold text-indigo-700">Reflector</td>
+                                        <td class="px-4 py-3">不重试</td>
+                                        <td class="px-4 py-3 text-gray-600">反思失败不影响保底答案（已写出），损失可承受</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-bold text-orange-700">429 速率限制</td>
+                                        <td class="px-4 py-3">读 Retry-After 头 + 长退避上限</td>
+                                        <td class="px-4 py-3 text-gray-600">速率限制有标准协议，遵守即可</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-bold text-red-700">客户端超时</td>
+                                        <td class="px-4 py-3">一律不重试</td>
+                                        <td class="px-4 py-3 text-gray-600">超时多半源于模型本身慢，重试只会再超时</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- m5 -->
+                <div class="tab-content" data-tab-content="m5">
+                    <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+                        <h4 class="text-xl font-bold mb-3">Reflector 的四维语义校验</h4>
+                        <p class="text-sm text-gray-600 mb-6">Reflector 不是简单的存在性检查，而是直接对应<strong>评分公式的四个惩罚维度</strong>。让"评分公式"从"线上一次性的黑盒"变成"线下可前置的检查项"。</p>
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div class="bg-rose-50 rounded-xl p-5 border border-rose-100">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-2xl">📐</span>
+                                    <div class="font-bold text-rose-700">结构</div>
+                                </div>
+                                <p class="text-xs text-gray-700">列名 / 列数 / 行数与问题语义匹配。</p>
+                                <div class="mt-2 text-xs text-rose-600 font-medium">⚠️ 列数不对 → 召回率直接拉低</div>
+                            </div>
+                            <div class="bg-rose-50 rounded-xl p-5 border border-rose-100">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-2xl">➕</span>
+                                    <div class="font-bold text-rose-700">冗余列</div>
+                                </div>
+                                <p class="text-xs text-gray-700">是否多答了无关列。</p>
+                                <div class="mt-2 text-xs text-rose-600 font-medium">⚠️ 直接触发 λ × extra/predicted 惩罚项</div>
+                            </div>
+                            <div class="bg-rose-50 rounded-xl p-5 border border-rose-100">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-2xl">📊</span>
+                                    <div class="font-bold text-rose-700">聚合检查</div>
+                                </div>
+                                <p class="text-xs text-gray-700">问"how many"却返回多行。</p>
+                                <div class="mt-2 text-xs text-rose-600 font-medium">⚠️ 显然忘做 COUNT/SUM，召回率为 0</div>
+                            </div>
+                            <div class="bg-rose-50 rounded-xl p-5 border border-rose-100">
+                                <div class="flex items-center gap-3 mb-2">
+                                    <span class="text-2xl">🎨</span>
+                                    <div class="font-bold text-rose-700">格式</div>
+                                </div>
+                                <p class="text-xs text-gray-700">日期 / null / 大小写 / 数字精度。</p>
+                                <div class="mt-2 text-xs text-rose-600 font-medium">⚠️ 与评测器期望格式不一致 → 签名不匹配</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Architecture benefits -->
+            <div class="mt-12 grid md:grid-cols-5 gap-3">
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-4 text-center">
+                    <div class="text-2xl mb-1">🎯</div>
+                    <div class="font-bold text-sm">强反幻觉</div>
+                    <p class="text-xs text-gray-600 mt-1">Profile → 结构性保证</p>
+                </div>
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-4 text-center">
+                    <div class="text-2xl mb-1">🔍</div>
+                    <div class="font-bold text-sm">可视化调试</div>
+                    <p class="text-xs text-gray-600 mt-1">trace + DAG 图</p>
+                </div>
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-4 text-center">
+                    <div class="text-2xl mb-1">🛡️</div>
+                    <div class="font-bold text-sm">兜底叠加</div>
+                    <p class="text-xs text-gray-600 mt-1">六层漏斗收敛</p>
+                </div>
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-4 text-center">
+                    <div class="text-2xl mb-1">🚧</div>
+                    <div class="font-bold text-sm">自我保护</div>
+                    <p class="text-xs text-gray-600 mt-1">反模式前置拦截</p>
+                </div>
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-4 text-center">
+                    <div class="text-2xl mb-1">📦</div>
+                    <div class="font-bold text-sm">状态隔离</div>
+                    <p class="text-xs text-gray-600 mt-1">per-task 无串扰</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Tools Layer ============== -->
+    <section id="tools" class="py-20 bg-gray-50">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Tools Layer · 12 工具 / 4 类角色</div>
+                <h2 class="text-4xl font-bold mb-4">工具层：能力的最小但锐利集合</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">每一类工具职责互斥、能力互补；以"压缩 step 数"为第一目标，统一受路径沙箱保护。</p>
+            </div>
+
+            <!-- 4 categories grid -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-5 mb-12">
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-blue-500 card-hover">
+                    <div class="text-3xl mb-3">📂</div>
+                    <h3 class="font-bold text-lg mb-2">文件类</h3>
+                    <p class="text-xs text-gray-500 mb-3 uppercase tracking-wider">探索上下文 / 定位输入</p>
+                    <ul class="text-sm space-y-1.5 text-gray-700">
+                        <li>• 列目录</li>
+                        <li>• glob 匹配</li>
+                        <li>• CSV 预览</li>
+                        <li>• JSON 预览</li>
+                        <li>• 文档读取（3 模式）</li>
+                    </ul>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-emerald-500 card-hover">
+                    <div class="text-3xl mb-3">🔬</div>
+                    <h3 class="font-bold text-lg mb-2">探索类</h3>
+                    <p class="text-xs text-gray-500 mb-3 uppercase tracking-wider">数据形状探查</p>
+                    <ul class="text-sm space-y-1.5 text-gray-700">
+                        <li>• SQLite Schema</li>
+                        <li>• 列画像（dtype / null / unique / min / max / 样例）</li>
+                    </ul>
+                    <div class="mt-3 text-xs bg-emerald-50 text-emerald-700 rounded p-2">高密度：一次顶 3 次原子调用</div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-amber-500 card-hover">
+                    <div class="text-3xl mb-3">⚡</div>
+                    <h3 class="font-bold text-lg mb-2">计算类</h3>
+                    <p class="text-xs text-gray-500 mb-3 uppercase tracking-wider">数据加工与聚合</p>
+                    <ul class="text-sm space-y-1.5 text-gray-700">
+                        <li>• 上下文 SQL（直接查 SQLite）</li>
+                        <li>• DataFrame SQL（CSV/JSON/Parquet → 内存表）</li>
+                        <li>• 受限 Python（硬超时兜底）</li>
+                    </ul>
+                    <div class="mt-3 text-xs bg-amber-50 text-amber-700 rounded p-2">三级兜底：SQL → DataFrame SQL → Python</div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-purple-500 card-hover">
+                    <div class="text-3xl mb-3">🎛️</div>
+                    <h3 class="font-bold text-lg mb-2">控制流类</h3>
+                    <p class="text-xs text-gray-500 mb-3 uppercase tracking-wider">驱动 DAG 状态流转</p>
+                    <ul class="text-sm space-y-1.5 text-gray-700">
+                        <li>• 标记节点完成（mark_node_done）</li>
+                        <li>• 提交最终答案（answer）</li>
+                    </ul>
+                    <div class="mt-3 text-xs bg-purple-50 text-purple-700 rounded p-2">不读不写文件 · 强校验入参</div>
+                </div>
+            </div>
+
+            <!-- Design rationale -->
+            <h3 class="text-2xl font-bold mb-6 text-center">六条设计动机</h3>
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-5 mb-12">
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">1</div>
+                        <h4 class="font-bold">压缩 step 数</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">高信息密度工具：列画像替代 head/dtypes/shape 三连击；文档读取内置 grep 模式；DataFrame SQL 替代 pandas group_by。</p>
+                </div>
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">2</div>
+                        <h4 class="font-bold">沙箱双层防御</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">路径逃逸阻断（拒绝 <code class="font-mono text-xs bg-gray-100 px-1 rounded">..</code> 与符号链接）+ 缺失文件友好提示（附带真实目录清单）。</p>
+                </div>
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">3</div>
+                        <h4 class="font-bold">错误即修正信号</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">异常类型 + 原文直接转工具消息回传，富错误信息驱动模型自修正，省一轮"应该读哪个文件"的反问。</p>
+                </div>
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">4</div>
+                        <h4 class="font-bold">强 schema 输入</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">所有工具用结构化 schema 声明参数，LLM 拿到显式字段定义，从源头降低参数错传概率。</p>
+                </div>
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">5</div>
+                        <h4 class="font-bold">控制流强校验</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">DAG 必须存在 / 节点 ID 有效 / 是当前聚焦节点 / 答案行长自洽。任一不满足立刻打回，避免"看似成功实则状态错乱"。</p>
+                </div>
+                <div class="bg-white rounded-xl p-6 shadow-sm">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">6</div>
+                        <h4 class="font-bold">受限 Python 硬边界</h4>
+                    </div>
+                    <p class="text-sm text-gray-600">硬性时间上限 + 工作目录强锁 + stdout 捕获。不是为了沙箱安全，而是为了<strong>预算可控</strong>。</p>
+                </div>
+            </div>
+
+            <!-- Backup engine -->
+            <div class="bg-gradient-to-r from-slate-100 to-gray-100 rounded-2xl p-8 border-l-4 border-slate-500">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">🔧</div>
+                    <div>
+                        <h3 class="text-xl font-bold mb-2">备份引擎：Legacy ReAct 路径</h3>
+                        <p class="text-sm text-gray-700 mb-3">工具层同时保留了一套<strong>老式 ReAct 工具注册表</strong>作为备份引擎：当主路径（LangGraph DAG）出现致命问题时，调度层可以显式注入 model + tools，切回单循环 ReAct 模式跑同一道题。</p>
+                        <div class="text-sm text-slate-700 italic">这是"双引擎"架构选择——主引擎追求最优能力，备份引擎追求最低假设、最简实现，<strong>能跑出答案就比卡住强</strong>。</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Runner / Vote / Retry ============== -->
+    <section id="runner" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Runner · Vote · Retry · Score</div>
+                <h2 class="text-4xl font-bold mb-4">运行调度层：把随机性压成多数决</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">Agent 单次输出存在天然随机性。调度层的使命是把这种随机性<strong>压成可投票的多份候选</strong>，再用规范化签名做多数决。</p>
+            </div>
+
+            <!-- 5.1 隔离执行 -->
+            <div class="bg-gradient-to-br from-rose-50 to-orange-50 rounded-2xl p-8 mb-8 border-l-4 border-rose-500">
+                <div class="flex items-start gap-4">
+                    <div class="text-4xl">🔒</div>
+                    <div class="flex-1">
+                        <h3 class="text-xl font-bold text-rose-700 mb-3">5.1 隔离执行：每题一进程</h3>
+                        <p class="text-sm text-gray-700 mb-4">每道题以独立子进程运行，受硬性时间预算保护。这是<strong>线程模型无法做到的</strong>：</p>
+                        <div class="grid md:grid-cols-3 gap-3">
+                            <div class="bg-white rounded-lg p-4 shadow-sm">
+                                <div class="text-2xl mb-1">🐛</div>
+                                <div class="font-bold text-sm mb-1">C 扩展卡死</div>
+                                <p class="text-xs text-gray-600">SSL 握手等纯 C 代码里 KeyboardInterrupt 失效。</p>
+                            </div>
+                            <div class="bg-white rounded-lg p-4 shadow-sm">
+                                <div class="text-2xl mb-1">⚔️</div>
+                                <div class="font-bold text-sm mb-1">SIGTERM → SIGKILL</div>
+                                <p class="text-xs text-gray-600">先软杀宽限期内退出，否则硬杀强制收尸。</p>
+                            </div>
+                            <div class="bg-white rounded-lg p-4 shadow-sm">
+                                <div class="text-2xl mb-1">💥</div>
+                                <div class="font-bold text-sm mb-1">崩溃可捕获</div>
+                                <p class="text-xs text-gray-600">OOM / 段错误 → 退出码 → failure_reason，不挂全局。</p>
+                            </div>
+                        </div>
+                        <div class="mt-5 bg-white/70 rounded-lg p-4 border border-rose-200">
+                            <div class="font-bold text-sm text-rose-800 mb-2">两条执行路径</div>
+                            <ul class="text-sm text-gray-700 space-y-1">
+                                <li>• <strong>默认路径</strong>：子进程隔离 + 硬超时 + 跑 LangGraph DAG（多题并发的正式运行）</li>
+                                <li>• <strong>进程内路径</strong>：显式注入 model + tools 时直接在当前进程跑（Legacy ReAct / 调试 / 单测）；并发自动压到 1，避免 LLM 客户端线程不安全</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5.2 保底文件契约 -->
+            <div class="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-2xl p-8 mb-8">
+                <h3 class="text-xl font-bold text-indigo-800 mb-3">5.2 多轮调度与"保底文件"契约</h3>
+                <p class="text-sm text-gray-700 mb-5">每道题独立跑多轮，每一轮都尝试给出一份候选答案。文件命名规则严格遵循以下契约：</p>
+
+                <div class="overflow-x-auto mb-6">
+                    <table class="w-full text-sm bg-white rounded-xl overflow-hidden shadow-sm">
+                        <thead>
+                            <tr class="bg-indigo-600 text-white">
+                                <th class="px-5 py-3 text-left">阶段</th>
+                                <th class="px-5 py-3 text-left">该轮该题的输出文件名</th>
+                                <th class="px-5 py-3 text-left">语义</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100">
+                            <tr>
+                                <td class="px-5 py-3 font-semibold text-indigo-700">第 1 轮</td>
+                                <td class="px-5 py-3 font-mono text-xs"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded">prediction.csv</span>（保底文件）</td>
+                                <td class="px-5 py-3 text-gray-600">永远写保底文件</td>
+                            </tr>
+                            <tr>
+                                <td class="px-5 py-3 font-semibold text-indigo-700">第 N 轮（N≥2），保底已存在</td>
+                                <td class="px-5 py-3 font-mono text-xs"><span class="bg-amber-100 text-amber-700 px-2 py-1 rounded">rN.csv</span>（候选文件）</td>
+                                <td class="px-5 py-3 text-gray-600">仅参与投票，不暴露给评测</td>
+                            </tr>
+                            <tr>
+                                <td class="px-5 py-3 font-semibold text-indigo-700">第 N 轮（N≥2），保底仍不存在</td>
+                                <td class="px-5 py-3 font-mono text-xs"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded">prediction.csv</span>（补位）</td>
+                                <td class="px-5 py-3 text-gray-600">前面所有轮失败，本轮补位救场</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-5">
+                    <div class="bg-white rounded-xl p-5 border-l-4 border-emerald-500">
+                        <div class="font-bold text-emerald-700 mb-2">🔑 关键不变量</div>
+                        <p class="text-sm text-gray-700">保底文件代表"当前最佳"。容器外同步守护进程只看保底文件——只要它存在就有保底分。投票胜者通过原子覆盖把保底文件升级为更优答案。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 border-l-4 border-amber-500">
+                        <div class="font-bold text-amber-700 mb-2">⚠️ 并发安全的微妙之处</div>
+                        <p class="text-sm text-gray-700">候选文件名规则必须在<strong>主线程提交任务时</strong>就预先确定。否则同一轮多个 worker 同时启动都会看到"保底不存在"全都补位互相覆盖。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5.3 + 5.4 投票规则 -->
+            <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-8 mb-8">
+                <h3 class="text-xl font-bold text-purple-800 mb-5">5.3 / 5.4 投票域签名规范化与裁决规则</h3>
+
+                <div class="grid lg:grid-cols-2 gap-6">
+                    <div class="bg-white rounded-xl p-6 shadow-sm">
+                        <h4 class="font-bold text-lg mb-3">🔢 列签名集合化</h4>
+                        <div class="bg-gray-900 text-gray-100 ascii-box rounded-lg p-4 mb-4 text-xs">columns = [c1, c2, c3]
+rows    = [[a, b, c], [d, e, f], ...]
+
+# 第 1 步：每列单元格规范化 + 排序
+# （行无序）
+col_sigs = [
+  sorted([norm(a), norm(d), ...]),
+  sorted([norm(b), norm(e), ...]),
+  sorted([norm(c), norm(f), ...]),
+]
+
+# 第 2 步：所有列再排序
+# （列无序，列名也不参与）
+signature = sorted(col_sigs)</div>
+                        <div class="text-xs text-gray-600">⇒ 两份答案签名相等当且仅当它们用列签名匹配方式打分会得到相同结果。</div>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-6 shadow-sm">
+                        <h4 class="font-bold text-lg mb-3">⚖️ 裁决规则</h4>
+                        <div class="space-y-2">
+                            <div class="flex items-center gap-3 bg-gray-50 rounded-lg p-3">
+                                <div class="w-8 h-8 rounded-full bg-gray-300 text-white flex items-center justify-center font-bold text-sm">0</div>
+                                <div class="text-sm flex-1">
+                                    <div class="font-semibold">0 个有效候选</div>
+                                    <div class="text-xs text-gray-600">无候选可裁，保留原状</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 bg-blue-50 rounded-lg p-3">
+                                <div class="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-sm">1-2</div>
+                                <div class="text-sm flex-1">
+                                    <div class="font-semibold">1-2 个候选</div>
+                                    <div class="text-xs text-gray-600">取最早一轮（轮 1 最稳定）</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 bg-emerald-50 rounded-lg p-3">
+                                <div class="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-sm">3+</div>
+                                <div class="text-sm flex-1">
+                                    <div class="font-semibold">3+ 候选，存在多数签名</div>
+                                    <div class="text-xs text-gray-600">取该多数签名出现的最早轮次</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 bg-amber-50 rounded-lg p-3">
+                                <div class="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-sm">≠</div>
+                                <div class="text-sm flex-1">
+                                    <div class="font-semibold">3+ 候选，全异</div>
+                                    <div class="text-xs text-gray-600">取最早一轮（earliest 兜底）</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-4 text-xs text-gray-700 bg-purple-50 rounded p-3">
+                            💡 裁决落地通过<strong>原子覆盖</strong>完成：先写临时文件再 rename，保证容器外同步进程读到的要么是旧内容、要么是新内容，绝不会读到半截。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 bg-white rounded-xl p-5 border-l-4 border-purple-500">
+                    <div class="font-bold text-purple-700 mb-2">单元格规范化规则（按优先级）</div>
+                    <div class="grid md:grid-cols-2 gap-3 text-sm">
+                        <div class="space-y-1.5">
+                            <div>① <strong>null 字面量</strong>（None / "null" / "nan" / "NaT"）→ 统一为空字符串</div>
+                            <div>② <strong>布尔值</strong> → "True" / "False"（不冒充数字 1.0 / 0.0）</div>
+                            <div>③ <strong>数字</strong> → 按固定精度四舍五入（合并近似答案）</div>
+                            <div>④ <strong>ISO / 零填充日期</strong> → 统一格式</div>
+                        </div>
+                        <div class="space-y-1.5">
+                            <div>⑤ <strong>长形式英文日期</strong>（"March 1, 2024"）→ ISO 化</div>
+                            <div>⑥ <strong>其他文本</strong> → strip + 去 \r\n</div>
+                            <div class="text-rose-600 font-medium">⚠️ <strong>歧义日期</strong>（US <code class="text-xs">MM/DD</code> vs EU <code class="text-xs">DD/MM</code>）→ 一律不动，避免静默换月日</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5.5 双归一化 -->
+            <div class="bg-gradient-to-br from-teal-50 to-cyan-50 rounded-2xl p-8 mb-8 border-l-4 border-teal-500">
+                <h3 class="text-xl font-bold text-teal-800 mb-3">5.5 双归一化：投票域 vs 评测域分离</h3>
+                <p class="text-sm text-gray-700 mb-5">签名规范化在系统中<strong>有两套独立实现</strong>，分别服务于不同目的。两者<strong>不混用</strong>、<strong>不共享代码</strong>——这是有意的架构隔离。</p>
+
+                <div class="grid md:grid-cols-2 gap-5">
+                    <div class="bg-white rounded-xl p-6 shadow-sm border-t-4 border-purple-500">
+                        <div class="text-xs uppercase tracking-wider text-purple-600 font-bold mb-2">投票域</div>
+                        <h4 class="font-bold text-lg mb-3">激进归一化</h4>
+                        <ul class="text-sm space-y-1.5 text-gray-700">
+                            <li>✓ 数字精度统一</li>
+                            <li>✓ 日期格式统一</li>
+                            <li>✓ 长文本归一</li>
+                        </ul>
+                        <div class="mt-4 text-sm font-medium text-purple-700">目的：最大化候选合并能力</div>
+                        <p class="text-xs text-gray-500 mt-2">让"看似不同实则同义"的答案合并以提高投票聚合能力</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-6 shadow-sm border-t-4 border-teal-500">
+                        <div class="text-xs uppercase tracking-wider text-teal-600 font-bold mb-2">评测域（本地 self-eval）</div>
+                        <h4 class="font-bold text-lg mb-3">保守归一化</h4>
+                        <ul class="text-sm space-y-1.5 text-gray-700">
+                            <li>✓ 仅 strip 空白</li>
+                            <li>✓ 少数 null 字面量</li>
+                            <li>✗ 不做精度 / 日期归一</li>
+                        </ul>
+                        <div class="mt-4 text-sm font-medium text-teal-700">目的：贴合真实评测器行为</div>
+                        <p class="text-xs text-gray-500 mt-2">让本地分数尽量贴近线上真实分，避免本地虚高</p>
+                    </div>
+                </div>
+
+                <div class="mt-5 bg-white rounded-lg p-4 text-sm">
+                    <div class="font-bold text-gray-800 mb-1">5.6 落盘前的最终规范化</div>
+                    <p class="text-gray-600">投票胜者覆盖保底文件后，调度层还会对最终保底文件做一次规范化重写——把每个单元格走一遍投票域归一化函数后写回。这是"评测系统看到的字节"层最后的格式统一。</p>
+                </div>
+            </div>
+
+            <!-- 5.7 Retry pass -->
+            <div class="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl p-8 mb-8 border-l-4 border-amber-500">
+                <h3 class="text-xl font-bold text-amber-800 mb-3">5.7 失败重试 Pass</h3>
+                <p class="text-sm text-gray-700 mb-5">所有投票轮跑完后，对仍失败的题目再单独跑一次。这一设计的关键：<strong>重试发生在投票之后</strong>。投票本身已经能挽救一部分波动型失败，剩下仍失败的多半是稳定型失败。</p>
+
+                <div class="grid md:grid-cols-2 gap-5">
+                    <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-emerald-500">
+                        <div class="font-bold text-emerald-700 mb-2">✓ 重试成功</div>
+                        <p class="text-sm text-gray-700">用原子重命名把临时产物提升为正式答案，trace 同样升级。</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-rose-500">
+                        <div class="font-bold text-rose-700 mb-2">✗ 重试失败</div>
+                        <p class="text-sm text-gray-700">删除临时产物，原本失败状态保持不变。<strong>不会让重试反而把状态搞乱。</strong></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5.8 + 5.9 可观测性 + Self-eval -->
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-blue-500">
+                    <h3 class="text-lg font-bold mb-3">5.8 可观测性维度</h3>
+                    <ul class="text-sm space-y-2 text-gray-700">
+                        <li>• 每题每轮完整 trace（思考 / 动作 / 观测）</li>
+                        <li>• 每题投票摘要（候选状态 / 签名 / 应用规则）</li>
+                        <li>• 全 run 总结（轮次 / 重试 / 投票统计）</li>
+                        <li>• 本地评分报告</li>
+                    </ul>
+                    <div class="mt-4 bg-blue-50 rounded-lg p-3 text-xs">
+                        💡 <strong>候选状态字段</strong>（ok / missing / empty / unparseable）是<strong>纯可观测性字段，不参与投票裁决</strong>，纯粹用于事后定位"为什么某轮全军覆没"——观测面与控制面严格分离。
+                    </div>
+                </div>
+                <div class="bg-white rounded-2xl p-6 shadow-sm border-t-4 border-teal-500">
+                    <h3 class="text-lg font-bold mb-3">5.9 本地 Self-Eval：评分层</h3>
+                    <p class="text-sm text-gray-700 mb-3">独立的本地评分组件，按照评测平台的评分规则对每题打分（召回率减去多余列惩罚），落出每题分数与汇总统计。</p>
+                    <div class="text-xs bg-teal-50 rounded-lg p-3 text-teal-800">
+                        与投票域归一化函数刻意分离——评测域必须保守。这是"线下回归测试"的基石，让任何代码改动都能立刻量化对得分的影响。
+                    </div>
+                </div>
+            </div>
+
+            <!-- Architecture benefits -->
+            <div class="mt-12 grid md:grid-cols-5 gap-3">
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div class="text-2xl mb-1">💰</div>
+                    <div class="font-bold text-sm">预算可控</div>
+                    <p class="text-xs text-gray-600 mt-1">无限循环不可能</p>
+                </div>
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div class="text-2xl mb-1">📈</div>
+                    <div class="font-bold text-sm">显著稳过单跑</div>
+                    <p class="text-xs text-gray-600 mt-1">多数决过滤偶发错误</p>
+                </div>
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div class="text-2xl mb-1">🔐</div>
+                    <div class="font-bold text-sm">保底全程在线</div>
+                    <p class="text-xs text-gray-600 mt-1">崩溃也有合规答案</p>
+                </div>
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div class="text-2xl mb-1">🔍</div>
+                    <div class="font-bold text-sm">观测/控制分离</div>
+                    <p class="text-xs text-gray-600 mt-1">日志非隐式控制流</p>
+                </div>
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4 text-center border border-rose-100">
+                    <div class="text-2xl mb-1">🎯</div>
+                    <div class="font-bold text-sm">本地线上对齐</div>
+                    <p class="text-xs text-gray-600 mt-1">避免本地虚高</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: CLI / Dataset / Entrypoint ============== -->
+    <section id="entrypoint" class="py-20 bg-gray-50">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">CLI · Dataset · Entrypoint</div>
+                <h2 class="text-4xl font-bold mb-4">边界三层：合规、契约与稳定接入</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">CLI/配置层负责合规与可切换；数据集层守护沙箱根契约；Entrypoint 层把"评测平台契约"与"Runner 内部语义"彻底解耦。</p>
+            </div>
+
+            <!-- CLI / 配置层 -->
+            <div class="bg-white rounded-2xl p-8 shadow-sm mb-8 border-l-4 border-orange-500">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="text-3xl">⌨️</div>
+                    <h3 class="text-2xl font-bold">六、CLI / 配置层</h3>
+                </div>
+                <p class="text-sm text-gray-600 mb-6">命令行入口统一、配置环境变量展开、不可变配置对象、懒加载策略——四个机制共同保证"合规 + 可切换 + 快速调试"。</p>
+
+                <div class="grid md:grid-cols-2 gap-5">
+                    <div class="bg-orange-50 rounded-xl p-5">
+                        <div class="font-bold text-orange-800 mb-3">关键机制</div>
+                        <ul class="text-sm space-y-2 text-gray-700">
+                            <li>• <strong>命令分发统一入口</strong>：状态查看 / 单题元数据 / 单题运行 / 整集运行 / 本地评分</li>
+                            <li>• <strong>配置环境变量展开</strong>：模型名 / API 地址 / API Key 通过环境变量注入；YAML 中以占位符声明（含默认值）</li>
+                            <li>• <strong>不可变配置对象</strong>：加载后冻结，跨层不可变；天然线程/进程安全</li>
+                            <li>• <strong>路径解析约定</strong>：相对路径以项目根为基准；绝对路径直接保留</li>
+                            <li>• <strong>三套配置分场景</strong>：示例 / 本地开发 / 提交镜像</li>
+                            <li>• <strong>懒加载策略</strong>：轻命令瞬时启动，重依赖按需加载</li>
+                            <li>• <strong>配置项校验前置</strong>：投票轮数等关键字段在加载阶段就校验</li>
+                        </ul>
+                    </div>
+                    <div class="bg-emerald-50 rounded-xl p-5">
+                        <div class="font-bold text-emerald-800 mb-3">设计动机与优点</div>
+                        <ul class="text-sm space-y-2 text-gray-700">
+                            <li>• <strong>合规要求</strong>：API Key 不落镜像、运行期不联网（除模型 API 外）是参赛硬约束</li>
+                            <li>• <strong>无缝切换</strong>：同一份代码通过切换配置就能在本地冒烟与提交镜像之间切换</li>
+                            <li>• <strong>快慢分离</strong>：高频轻命令几乎瞬时启动，不会被 Agent 链路拖慢</li>
+                            <li>• <strong>快速失败</strong>：配置不合法立刻报错；任何字段名漂移立刻可见</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 数据集层 -->
+            <div class="bg-white rounded-2xl p-8 shadow-sm mb-8 border-l-4 border-amber-500">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="text-3xl">📚</div>
+                    <h3 class="text-2xl font-bold">七、数据集层</h3>
+                </div>
+                <p class="text-sm text-gray-600 mb-6">数据集层守护两个核心不变量：<strong>"上下文目录路径"是整个工具沙箱的根</strong>，<strong>不可变 Schema 跨层传递不会被意外修改</strong>。</p>
+
+                <div class="grid md:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div class="bg-amber-50 rounded-xl p-4 text-center">
+                        <div class="text-2xl mb-2">📁</div>
+                        <div class="font-bold text-sm mb-1">目录契约固定</div>
+                        <p class="text-xs text-gray-600">每题一目录：元数据 JSON + 上下文子目录</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-4 text-center">
+                        <div class="text-2xl mb-2">🔒</div>
+                        <div class="font-bold text-sm mb-1">不可变 Schema</div>
+                        <p class="text-xs text-gray-600">题目记录 / 资产 / 答案表格全部 frozen</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-4 text-center">
+                        <div class="text-2xl mb-2">⚡</div>
+                        <div class="font-bold text-sm mb-1">快速失败</div>
+                        <p class="text-xs text-gray-600">字段名漂移立刻报错</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-4 text-center">
+                        <div class="text-2xl mb-2">🔢</div>
+                        <div class="font-bold text-sm mb-1">稳定排序</div>
+                        <p class="text-xs text-gray-600">按编号整数排，不是字典序</p>
+                    </div>
+                    <div class="bg-amber-50 rounded-xl p-4 text-center">
+                        <div class="text-2xl mb-2">🎚️</div>
+                        <div class="font-bold text-sm mb-1">筛选能力</div>
+                        <p class="text-xs text-gray-600">按题号 / 难度白名单</p>
+                    </div>
+                </div>
+
+                <div class="mt-6 bg-amber-50/50 rounded-lg p-4 border border-amber-200 text-sm text-gray-700">
+                    💡 <strong>为什么"路径不变量"是基石</strong>：所有工具都假设路径相对于上下文目录解析；这个不变量一旦被打破，路径沙箱就形同虚设。把"上下文路径"集中在一处定义，让沙箱只有一个被信任的入口。
+                </div>
+            </div>
+
+            <!-- Entrypoint 接入层 -->
+            <div class="bg-white rounded-2xl p-8 shadow-sm border-l-4 border-rose-500">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="text-3xl">🐳</div>
+                    <h3 class="text-2xl font-bold">八、Docker / Entrypoint 接入层</h3>
+                </div>
+
+                <h4 class="font-bold text-lg mb-3">三个矛盾需求的统一解</h4>
+                <p class="text-sm text-gray-600 mb-5">接入层要同时满足三个看似矛盾的需求：</p>
+
+                <div class="grid md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-rose-50 rounded-xl p-5 border border-rose-200">
+                        <div class="text-rose-700 font-bold mb-2">需求 ①</div>
+                        <p class="text-sm text-gray-700">多轮投票需要把候选文件互相隔离——不能让评测看到中间候选。</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-xl p-5 border border-rose-200">
+                        <div class="text-rose-700 font-bold mb-2">需求 ②</div>
+                        <p class="text-sm text-gray-700">评测平台只看一个固定路径——不知道运行 ID。</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-xl p-5 border border-rose-200">
+                        <div class="text-rose-700 font-bold mb-2">需求 ③</div>
+                        <p class="text-sm text-gray-700">进程随时可能被强杀——不能依赖"跑完后统一拷贝"。</p>
+                    </div>
+                </div>
+
+                <h4 class="font-bold text-lg mb-3">三方案对比</h4>
+                <div class="overflow-x-auto mb-6">
+                    <table class="w-full text-sm bg-gray-50 rounded-xl overflow-hidden">
+                        <thead>
+                            <tr class="bg-gray-200 text-gray-800">
+                                <th class="px-5 py-3 text-left">方案</th>
+                                <th class="px-5 py-3 text-left">缺点</th>
+                                <th class="px-5 py-3 text-left">结论</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">
+                            <tr>
+                                <td class="px-5 py-3 font-medium">Runner 直接写评测路径</td>
+                                <td class="px-5 py-3 text-gray-600">候选文件都暴露给评测，违反"只读保底文件"语义；中间状态被评测看到</td>
+                                <td class="px-5 py-3"><span class="text-red-600 font-medium">❌ 弃用</span></td>
+                            </tr>
+                            <tr>
+                                <td class="px-5 py-3 font-medium">跑完后再统一拷贝</td>
+                                <td class="px-5 py-3 text-gray-600">一旦被强杀，所有未拷贝答案丢失</td>
+                                <td class="px-5 py-3"><span class="text-red-600 font-medium">❌ 弃用</span></td>
+                            </tr>
+                            <tr class="bg-emerald-50">
+                                <td class="px-5 py-3 font-bold text-emerald-700">后台同步 + 隔离目录</td>
+                                <td class="px-5 py-3 text-gray-700">无明显缺点；轮询频率远低于平台杀进程的宽限期，损失被压在很小窗口内</td>
+                                <td class="px-5 py-3"><span class="text-emerald-700 font-bold">✅ 采用</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="bg-emerald-50 rounded-xl p-5 mb-6 border-l-4 border-emerald-500">
+                    <h4 class="font-bold text-emerald-800 mb-2">第三方案的具体落地</h4>
+                    <ul class="text-sm space-y-1.5 text-gray-700">
+                        <li>① Runner 仍写到带运行 ID 的子目录隔离多轮产物；</li>
+                        <li>② 后台进程按固定周期<strong>原子拷贝</strong>保底文件到评测路径；</li>
+                        <li>③ 第 1 轮一旦写出保底文件，几秒内就同步到评测路径，就算后续被强杀也已经有保底答案；</li>
+                        <li>④ 多轮投票胜者覆盖隔离目录的保底文件后，下一个同步周期把胜者拍上去；</li>
+                        <li>⑤ 候选文件永远不会出现在评测目录，符合"只读保底文件"。</li>
+                    </ul>
+                </div>
+
+                <h4 class="font-bold text-lg mb-3">其他关键机制</h4>
+                <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div class="bg-rose-50 rounded-lg p-4">
+                        <div class="font-bold text-sm mb-1">🪝 信号收尾 trap</div>
+                        <p class="text-xs text-gray-600">收到终止信号时做最后一次同步再退出</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-lg p-4">
+                        <div class="font-bold text-sm mb-1">🌐 清空依赖镜像源</div>
+                        <p class="text-xs text-gray-600">构建期加速，运行期清空避免隐式联网违规</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-lg p-4">
+                        <div class="font-bold text-sm mb-1">🔐 环境变量自检不泄漏</div>
+                        <p class="text-xs text-gray-600">只打印 set/unset，绝不打印 Key 本身</p>
+                    </div>
+                    <div class="bg-rose-50 rounded-lg p-4">
+                        <div class="font-bold text-sm mb-1">📅 不预创建运行目录</div>
+                        <p class="text-xs text-gray-600">Runner 自己生成时间戳目录，避免撞目录</p>
+                    </div>
+                </div>
+
+                <!-- 架构优点 -->
+                <div class="mt-6 grid md:grid-cols-3 gap-3">
+                    <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4">
+                        <div class="font-bold text-sm text-rose-800 mb-1">🔌 评测对接零侵入</div>
+                        <p class="text-xs text-gray-600">Runner 不需知道"评测看哪个路径"，对接完全在 entrypoint 完成</p>
+                    </div>
+                    <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4">
+                        <div class="font-bold text-sm text-rose-800 mb-1">💪 强壮性极高</div>
+                        <p class="text-xs text-gray-600">无论平台何时发什么信号，都有合规答案保底</p>
+                    </div>
+                    <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-4">
+                        <div class="font-bold text-sm text-rose-800 mb-1">📋 合规审计友好</div>
+                        <p class="text-xs text-gray-600">日志无 Key、运行期无联网、构建/运行网络配置严格分离</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: End-to-End Timeline ============== -->
+    <section id="timeline" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">End-to-End Timeline</div>
+                <h2 class="text-4xl font-bold mb-4">端到端时序：所有层串起来看</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">从评测平台 <code class="font-mono text-sm bg-gray-100 px-2 py-0.5 rounded">docker run</code> 一直到打分落盘的完整执行流程。</p>
+            </div>
+
+            <!-- Timeline diagram -->
+            <div class="bg-gray-900 text-gray-100 rounded-2xl p-8 shadow-xl mb-12 overflow-x-auto">
+                <div class="ascii-box text-emerald-300">评测平台 docker run
+    │
+    ▼
+entrypoint
+    ├─ 校验环境变量、检查输入目录
+    ├─ 启动后台同步守护（周期性把保底文件原子拷贝到评测路径）
+    └─ 启动 dabench
+              │
+              ▼
+        加载配置（环境变量展开） → 索引数据集 → 创建运行目录（带时间戳）
+              │
+              ▼
+        ┌── 第 1 轮：并行跑所有题，落保底文件 ──────────────────┐
+        │                                                      │
+        │   ┌── 子进程隔离 + 硬超时 ──────────────────────┐    │
+        │   │  LangGraphAgent.run(task):                  │    │
+        │   │   Planner（注入 Dataset Profile）→ DAG      │    │
+        │   │   ├─ Scheduler（注入 Focused Prompt）       │    │
+        │   │   ├─ Executor + Tools（数据/控制流分离）    │    │
+        │   │   ├─ mark_node_done → Scheduler（下一节点） │    │
+        │   │   ├─ ... 各子任务节点接力                    │    │
+        │   │   ├─ 终节点提交 answer → Reflector          │    │
+        │   │   │   ├─ OK    → Finalize → END             │    │
+        │   │   │   └─ RETRY → Scheduler 重新聚焦终节点   │    │
+        │   │   └─ 节点失败 → NodeFailure → Replanner     │    │
+        │   └─────────────────────────────────────────────┘    │
+        │                                                      │
+        │   落 trace.json + prediction.csv（保底文件）         │
+        │                                                      │
+        │   ╔═════════════════════════════════════════════╗    │
+        │   ║ 后台同步进程把保底文件拍到评测路径          ║    │
+        │   ║ → 即使后续被强杀也有合规答案               ║    │
+        │   ╚═════════════════════════════════════════════╝    │
+        └──────────────────────────────────────────────────────┘
+              │
+              ├─ 第 2、3 轮：候选文件隔离写出（保底文件不动）
+              │   或在保底文件不存在时补位写入保底文件
+              │
+              ├─ Retry Pass：失败题最后一搏（写到独立临时文件，
+              │   成功则原子重命名提升为保底，失败则丢弃）
+              │
+              └─ 全表投票：签名规范化 → 多数决 / earliest →
+                 胜者原子覆盖保底文件 → 落最终规范化 → 落总结
+              │
+              ▼
+        dabench 退出 → entrypoint trap：最后一次同步 → 容器退出
+              │
+              ▼
+        评测平台读评测路径下的保底文件 → 按列签名打分</div>
+            </div>
+
+            <!-- Timeline phases -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="bg-gradient-to-br from-rose-50 to-pink-50 rounded-xl p-5 border-l-4 border-rose-500">
+                    <div class="text-xs uppercase tracking-wider text-rose-600 font-bold mb-2">Phase 1</div>
+                    <div class="font-bold text-base mb-2">启动 + 第 1 轮</div>
+                    <p class="text-xs text-gray-600">entrypoint 启动后台同步守护，dabench 加载配置、索引数据集，第 1 轮并行跑所有题落保底文件，几秒内同步到评测路径。</p>
+                </div>
+                <div class="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-xl p-5 border-l-4 border-amber-500">
+                    <div class="text-xs uppercase tracking-wider text-amber-600 font-bold mb-2">Phase 2</div>
+                    <div class="font-bold text-base mb-2">第 2、3 轮投票</div>
+                    <p class="text-xs text-gray-600">候选文件隔离写出（保底文件不动）；保底文件不存在时补位。所有候选文件名在主线程提交时预先确定，避免并发竞态。</p>
+                </div>
+                <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-5 border-l-4 border-emerald-500">
+                    <div class="text-xs uppercase tracking-wider text-emerald-600 font-bold mb-2">Phase 3</div>
+                    <div class="font-bold text-base mb-2">Retry Pass</div>
+                    <p class="text-xs text-gray-600">投票之后对仍失败的题再单独跑一次。成功则原子重命名提升为保底，失败则丢弃临时产物保持原状。</p>
+                </div>
+                <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-5 border-l-4 border-indigo-500">
+                    <div class="text-xs uppercase tracking-wider text-indigo-600 font-bold mb-2">Phase 4</div>
+                    <div class="font-bold text-base mb-2">全表投票 + 收尾</div>
+                    <p class="text-xs text-gray-600">签名规范化 → 多数决 / earliest → 胜者原子覆盖保底文件 → 落最终规范化 → 落总结。trap 做最后一次同步后退出。</p>
+                </div>
+            </div>
+
+            <!-- Closing thought -->
+            <div class="mt-10 bg-gradient-to-r from-indigo-100 via-purple-100 to-pink-100 rounded-2xl p-6 text-center">
+                <p class="text-base text-gray-800 italic">每一层只做自己的事，层与层之间通过<strong>明确的契约</strong>（目录结构、文件名约定、不可变状态字段、强校验工具签名）解耦，可以独立替换或调整。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Design Philosophy ============== -->
+    <section id="philosophy" class="py-20 bg-gray-50">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Design Philosophy</div>
+                <h2 class="text-4xl font-bold mb-4">设计哲学：五条核心原则</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">把分散在各层的设计取舍归纳为五条可独立验证的原则。任意一条违反，整个架构的优势都会打折。</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-6 mb-8">
+                <!-- 10.1 -->
+                <div class="bg-white rounded-2xl p-7 shadow-sm card-hover border-t-4 border-indigo-500">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-full gradient-primary text-white flex items-center justify-center font-bold text-lg">1</div>
+                        <h3 class="text-xl font-bold">DAG 驱动，反长上下文</h3>
+                    </div>
+                    <p class="text-sm text-gray-700 leading-relaxed mb-3">把"长对话"切成"短焦点"，每个节点只看自己需要的事实，从根上避免模型迷失。</p>
+                    <ul class="text-xs text-gray-600 space-y-1">
+                        <li>• Dataset Profile → 规划只能引用真实路径</li>
+                        <li>• Focused Prompt → 节点之间只透传事实摘要</li>
+                        <li>• 三层自我保护 → 拦截模型常见反模式</li>
+                    </ul>
+                </div>
+
+                <!-- 10.2 -->
+                <div class="bg-white rounded-2xl p-7 shadow-sm card-hover border-t-4 border-emerald-500">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-teal-500 text-white flex items-center justify-center font-bold text-lg">2</div>
+                        <h3 class="text-xl font-bold">保底语义优先于最优语义</h3>
+                    </div>
+                    <p class="text-sm text-gray-700 leading-relaxed mb-3">宁可先落一份合规答案再优化，绝不接受"算到最好但没落盘"。多轮、投票、重试都建立在保底之上做加法。</p>
+                    <ul class="text-xs text-gray-600 space-y-1">
+                        <li>• 任何阶段崩溃都至少留下保底答案</li>
+                        <li>• 后续轮的胜者通过原子覆盖升级保底</li>
+                        <li>• 绝不会让结果变更糟（monotonic 改进）</li>
+                    </ul>
+                </div>
+
+                <!-- 10.3 -->
+                <div class="bg-white rounded-2xl p-7 shadow-sm card-hover border-t-4 border-orange-500">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-500 text-white flex items-center justify-center font-bold text-lg">3</div>
+                        <h3 class="text-xl font-bold">失败的爆炸半径要可控</h3>
+                    </div>
+                    <p class="text-sm text-gray-700 leading-relaxed mb-3">工具失败 → 节点重试 → 计划 Replan → 反思 RETRY → 多轮投票 → 单题救援，每一层都有有限上限。</p>
+                    <ul class="text-xs text-gray-600 space-y-1">
+                        <li>• 避免无限烧预算</li>
+                        <li>• LLM 重试按调用点差异化</li>
+                        <li>• 底层 SDK 内置重试被显式关闭，避免双层叠加</li>
+                    </ul>
+                </div>
+
+                <!-- 10.4 -->
+                <div class="bg-white rounded-2xl p-7 shadow-sm card-hover border-t-4 border-purple-500">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center font-bold text-lg">4</div>
+                        <h3 class="text-xl font-bold">控制流必须显式且强校验</h3>
+                    </div>
+                    <p class="text-sm text-gray-700 leading-relaxed mb-3">节点完成、答案提交都做成专门的工具与状态字段，不依赖 LLM 自由文本。</p>
+                    <ul class="text-xs text-gray-600 space-y-1">
+                        <li>• 控制流走 ToolRunContext 侧通道</li>
+                        <li>• 与 messages 主通道严格分离</li>
+                        <li>• 任何不合规尝试立刻打回成工具错误</li>
+                    </ul>
+                </div>
+
+                <!-- 10.5 -->
+                <div class="bg-white rounded-2xl p-7 shadow-sm card-hover border-t-4 border-teal-500 md:col-span-2">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-teal-500 to-cyan-500 text-white flex items-center justify-center font-bold text-lg">5</div>
+                        <h3 class="text-xl font-bold">投票域与评测域不混用</h3>
+                    </div>
+                    <p class="text-sm text-gray-700 leading-relaxed mb-3">归一化在不同目的下用不同强度——投票域激进合并、评测域保守贴合，<strong>两套独立实现互不共享代码</strong>，避免"本地高分线上崩"。</p>
+                    <div class="grid md:grid-cols-2 gap-4 mt-4">
+                        <div class="bg-purple-50 rounded-lg p-3 text-xs">
+                            <strong class="text-purple-700">投票域（激进）</strong>
+                            <p class="text-gray-600 mt-1">让"看似不同实则同义"的答案合并以提高聚合能力</p>
+                        </div>
+                        <div class="bg-teal-50 rounded-lg p-3 text-xs">
+                            <strong class="text-teal-700">评测域（保守）</strong>
+                            <p class="text-gray-600 mt-1">贴合真实评测器行为，避免本地虚高</p>
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-600 mt-3">💡 可观测性字段（如候选状态）也与控制流字段严格分离，避免"日志变成隐式控制流"的反模式。</p>
+                </div>
+            </div>
+
+            <!-- Closing thesis -->
+            <div class="bg-gradient-primary gradient-primary text-white rounded-2xl p-8 text-center shadow-xl">
+                <div class="text-sm uppercase tracking-widest text-white/70 mb-3">总结</div>
+                <p class="text-xl md:text-2xl font-semibold leading-relaxed">
+                    在模型本身存在随机性、评测平台存在硬时间预算、任何深层调用都可能卡死的现实约束下，<br>
+                    系统仍能给出 <span class="text-yellow-200">稳定、可解释、可调试、可恢复</span> 的答案。
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Observability Plane ============== -->
+    <section id="observability" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Observability Plane</div>
+                <h2 class="text-4xl font-bold mb-4">可观测性面：架构的"第二维度"</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">除了功能维度的六层分层，系统还有一个独立维度——可观测性面，由各层在运行中持续落盘的结构化产物组成。</p>
+            </div>
+
+            <!-- Artifacts table -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden mb-10">
+                <table class="w-full">
+                    <thead>
+                        <tr class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+                            <th class="px-6 py-4 text-left text-sm">产物类别</th>
+                            <th class="px-6 py-4 text-left text-sm">产生层</th>
+                            <th class="px-6 py-4 text-left text-sm">用途</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-gray-900">每题每轮的完整 trace</div>
+                                <div class="text-xs text-gray-500 mt-1">思考 / 动作 / 观测 / 是否成功</div>
+                            </td>
+                            <td class="px-6 py-4 text-sm"><span class="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full text-xs font-medium">Agent 核心层</span></td>
+                            <td class="px-6 py-4 text-sm text-gray-700">事后还原"为什么这道题答错了"</td>
+                        </tr>
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-gray-900">DAG 拓扑与节点状态图</div>
+                                <div class="text-xs text-gray-500 mt-1">SVG，每次状态变化增量重绘</div>
+                            </td>
+                            <td class="px-6 py-4 text-sm"><span class="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full text-xs font-medium">Agent 核心层</span></td>
+                            <td class="px-6 py-4 text-sm text-gray-700">直观看到 DAG 在哪一步卡住</td>
+                        </tr>
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-gray-900">每题的投票摘要</div>
+                                <div class="text-xs text-gray-500 mt-1">候选状态 / 签名 / 应用规则</div>
+                            </td>
+                            <td class="px-6 py-4 text-sm"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-medium">调度层</span></td>
+                            <td class="px-6 py-4 text-sm text-gray-700">定位"为什么某轮全军覆没"</td>
+                        </tr>
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-gray-900">全 run 总结</div>
+                                <div class="text-xs text-gray-500 mt-1">轮次 / 重试 / 投票统计 / 各题状态</div>
+                            </td>
+                            <td class="px-6 py-4 text-sm"><span class="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full text-xs font-medium">调度层</span></td>
+                            <td class="px-6 py-4 text-sm text-gray-700">给整次运行一份高层报告</td>
+                        </tr>
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="font-semibold text-gray-900">本地评分报告</div>
+                                <div class="text-xs text-gray-500 mt-1">每题召回率 / 多余列数 / 最终分</div>
+                            </td>
+                            <td class="px-6 py-4 text-sm"><span class="bg-teal-100 text-teal-700 px-2 py-1 rounded-full text-xs font-medium">评分层</span></td>
+                            <td class="px-6 py-4 text-sm text-gray-700">量化任意代码改动对得分的影响</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Key choices -->
+            <h3 class="text-2xl font-bold text-center mb-6">三个关键架构选择</h3>
+            <div class="grid md:grid-cols-3 gap-5">
+                <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border-l-4 border-blue-500">
+                    <div class="text-3xl mb-3">📦</div>
+                    <h4 class="font-bold text-lg mb-2">结构化而非纯文本</h4>
+                    <p class="text-sm text-gray-700">所有产物都是 JSON / SVG，可程序化二次处理。让"调试"从"猜测式手动复现"变成结构化分析。</p>
+                </div>
+                <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-6 border-l-4 border-emerald-500">
+                    <div class="text-3xl mb-3">🔀</div>
+                    <h4 class="font-bold text-lg mb-2">与控制流隔离</h4>
+                    <p class="text-sm text-gray-700">观测字段不参与控制流裁决（如候选状态字段不参与投票），避免"日志变成隐式控制流"的反模式。</p>
+                </div>
+                <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border-l-4 border-purple-500">
+                    <div class="text-3xl mb-3">💾</div>
+                    <h4 class="font-bold text-lg mb-2">不依赖外部存储</h4>
+                    <p class="text-sm text-gray-700">所有产物都落在隔离的运行目录下，离线可查、离线可对比，无需任何外部服务。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============== Section: Key Insights & Takeaways ============== -->
+    <section id="takeaways" class="py-20 bg-gradient-to-br from-slate-50 via-indigo-50 to-purple-50">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="text-center mb-14">
+                <div class="text-sm font-semibold tracking-widest text-indigo-600 uppercase mb-2">Key Insights &amp; Takeaways</div>
+                <h2 class="text-4xl font-bold mb-4">关键洞察与启示</h2>
+                <p class="text-gray-600 max-w-3xl mx-auto">从 boost-agent 的架构设计中可以提炼出四个维度的可迁移经验，适用于其他需要在硬约束下跑 LLM Agent 的场景。</p>
+            </div>
+
+            <!-- 4 insight cards -->
+            <div class="grid md:grid-cols-2 gap-6 mb-12">
+                <!-- 1. Design Philosophy -->
+                <div class="bg-white rounded-2xl p-7 shadow-md card-hover">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 text-white flex items-center justify-center text-2xl">🧭</div>
+                        <h3 class="text-xl font-bold">设计哲学</h3>
+                    </div>
+                    <ul class="space-y-3 text-sm text-gray-700">
+                        <li class="flex items-start gap-2">
+                            <span class="text-blue-500 font-bold mt-0.5">▸</span>
+                            <span><strong>保底先于最优</strong>：永远先有一份合规答案落盘，再做任何优化。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-blue-500 font-bold mt-0.5">▸</span>
+                            <span><strong>失败爆炸半径可控</strong>：每一层失败兜底都有有限上限。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-blue-500 font-bold mt-0.5">▸</span>
+                            <span><strong>显式优于隐式</strong>：控制流走专门工具，不依赖 LLM 自由文本。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-blue-500 font-bold mt-0.5">▸</span>
+                            <span><strong>关注分离</strong>：投票域 vs 评测域、可观测性面 vs 控制面。</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- 2. Technical Innovations -->
+                <div class="bg-white rounded-2xl p-7 shadow-md card-hover">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white flex items-center justify-center text-2xl">⚙️</div>
+                        <h3 class="text-xl font-bold">技术创新</h3>
+                    </div>
+                    <ul class="space-y-3 text-sm text-gray-700">
+                        <li class="flex items-start gap-2">
+                            <span class="text-emerald-500 font-bold mt-0.5">▸</span>
+                            <span><strong>双通道状态架构</strong>：messages + ToolRunContext 把对话流与控制流彻底分离。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-emerald-500 font-bold mt-0.5">▸</span>
+                            <span><strong>Dataset Profile 反幻觉</strong>：从"提示词约束"升级为"结构性保证"。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-emerald-500 font-bold mt-0.5">▸</span>
+                            <span><strong>Focused Prompt 接力</strong>：用上游事实摘要替代完整对话历史。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-emerald-500 font-bold mt-0.5">▸</span>
+                            <span><strong>列签名规范化投票</strong>：忽略列序 / 行序 / 列名，按集合多数决。</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- 3. Practical Implications -->
+                <div class="bg-white rounded-2xl p-7 shadow-md card-hover">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-500 text-white flex items-center justify-center text-2xl">🚀</div>
+                        <h3 class="text-xl font-bold">实践启示</h3>
+                    </div>
+                    <ul class="space-y-3 text-sm text-gray-700">
+                        <li class="flex items-start gap-2">
+                            <span class="text-orange-500 font-bold mt-0.5">▸</span>
+                            <span><strong>子进程隔离</strong>：在 LLM 调用栈可能卡死的场景下，比线程更可靠。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-orange-500 font-bold mt-0.5">▸</span>
+                            <span><strong>差异化重试</strong>：按调用点决定是否重试，避免双层叠加放大卡顿。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-orange-500 font-bold mt-0.5">▸</span>
+                            <span><strong>原子覆盖 + 后台同步</strong>：解耦 Runner 与评测平台契约的通用模式。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-orange-500 font-bold mt-0.5">▸</span>
+                            <span><strong>错误即修正信号</strong>：把工具失败当作驱动 LLM 自修正的输入。</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- 4. Limitations & Future Work -->
+                <div class="bg-white rounded-2xl p-7 shadow-md card-hover">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center text-2xl">🔭</div>
+                        <h3 class="text-xl font-bold">局限与未来工作</h3>
+                    </div>
+                    <ul class="space-y-3 text-sm text-gray-700">
+                        <li class="flex items-start gap-2">
+                            <span class="text-purple-500 font-bold mt-0.5">▸</span>
+                            <span><strong>投票候选数量上限</strong>：当前 ≤ 3 票，更多候选下的 tiebreak 策略待探索。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-purple-500 font-bold mt-0.5">▸</span>
+                            <span><strong>Reflector 是 LLM 校验</strong>：本身可能误判；可考虑引入硬规则前置。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-purple-500 font-bold mt-0.5">▸</span>
+                            <span><strong>DAG 由 Planner 一次画死</strong>：执行中无法增量调整，依赖 Replan 兜底。</span>
+                        </li>
+                        <li class="flex items-start gap-2">
+                            <span class="text-purple-500 font-bold mt-0.5">▸</span>
+                            <span><strong>子进程开销</strong>：每题独立进程对小题目存在固定启动成本。</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Final quote -->
+            <div class="bg-white rounded-2xl p-8 shadow-lg border-t-4 border-indigo-500">
+                <div class="text-center">
+                    <div class="text-5xl mb-4">💡</div>
+                    <p class="text-lg md:text-xl text-gray-800 italic max-w-4xl mx-auto leading-relaxed">
+                        "在模型本身存在随机性、评测平台存在硬时间预算、任何深层调用都可能卡死的现实约束下，<br>
+                        <strong class="text-indigo-700">分层 + 兜底 + 保底 + 隔离</strong> 是把 LLM Agent 从'实验室能跑'推向'生产可用'的核心范式。"
+                    </p>
+                    <div class="mt-6 inline-flex items-center gap-2 text-sm text-gray-500">
+                        <span class="w-12 h-px bg-gray-300"></span>
+                        <span>boost-agent · KDD Cup 2026</span>
+                        <span class="w-12 h-px bg-gray-300"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>

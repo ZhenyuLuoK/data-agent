@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spider 2.0: Evaluating LMs on Real-World Enterprise Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#construction">构建</a>
+      <a href="#eval">评估</a>
+      <a href="#findings">实证</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2411.07763" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2411.07763 · ICLR 2025 Oral</div>
+    <h1>Spider 2.0: Evaluating Language Models on Real-World Enterprise Text-to-SQL Workflows</h1>
+    <div class="meta">
+      <span>👥 RelationalAI / Univ. of HK / Yale 等多方合作</span>
+      <span>🏛️ ICLR 2025 Oral</span>
+      <span>📅 2024.11</span>
+    </div>
+    <p class="tagline">
+      把 NL2SQL 评测从"<strong>课堂级 Schema</strong>"推进到"<strong>真实企业级数据栈</strong>"：
+      <strong>632 个真实工作流任务</strong>，覆盖 BigQuery / Snowflake / Postgres / SQLite / DuckDB / DBT 等 <strong>多方言 + 多平台</strong>，
+      平均 schema 极大、查询动辄上百行，要求 LLM 不仅写 SQL 还要懂 dbt / 元数据探索 / 多步执行。
+      与 Spider 1.0 形成代际差，揭示出 LLM 在企业级 SQL 上"<strong>远未解决</strong>"。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">632</div><div class="label">真实工作流任务</div></div>
+      <div class="stat"><div class="value">6+</div><div class="label">SQL 方言/平台</div></div>
+      <div class="stat"><div class="value">Enterprise</div><div class="label">真实企业 schema</div></div>
+      <div class="stat"><div class="value">ICLR'25 Oral</div><div class="label">领域里程碑</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 研究空白与动机</h2>
+
+    <div class="panel-gap">
+      <h3>❌ Spider 1.0 / BIRD 的局限</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① Schema 太小</h4>
+          <p>Spider 平均每库不到 10 表；BIRD 略大，但仍远小于真实企业（动辄数百表、数千列）。</p>
+        </div>
+        <div>
+          <h4>② SQL 太短</h4>
+          <p>Spider/BIRD 大多数 SQL 在 ~50 个 token 内；真实企业分析查询常 100~500+ 行，含多层 CTE / window / pivot。</p>
+        </div>
+        <div>
+          <h4>③ 仅 SQLite 单方言</h4>
+          <p>真实数据栈是 Snowflake / BigQuery / Postgres / Redshift 多方言混合，函数与语法差异巨大。</p>
+        </div>
+        <div>
+          <h4>④ 单步生成，无工作流</h4>
+          <p>真实分析师工作流：探索元数据 → 写 SQL → 校验 → 调试 → 整合到 dbt 模型。Spider 1.0 完全没有这些。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ Spider 2.0 的核心贡献</h3>
+      <p>
+        ① <strong>632 个真实企业级文本-到-SQL 工作流任务</strong>，从开源项目、社区案例、真实数据栈中采集；<br/>
+        ② <strong>多方言（BigQuery / Snowflake / DuckDB / SQLite / Postgres）</strong>覆盖；<br/>
+        ③ 三个评测层：<strong>Spider2.0 / Spider2.0-Lite（简化版）/ Spider2.0-Snow</strong>；<br/>
+        ④ 任务包含 <strong>schema 探索 + 多文件 + dbt 编排</strong>，要求 agentic 解决而非单次 prompt；<br/>
+        ⑤ 实证揭示同等模型在 Spider 2.0（agent，最佳 21.3%）vs Spider 1.0（&gt;85%）上的巨大差距，是 NL2SQL 真实差距的诚实尺子。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">Spider 1.0 / BIRD（学术 schema）</span>
+      <span class="arrow">→</span>
+      <span class="step">真实企业差距</span>
+      <span class="arrow">→</span>
+      <span class="step">Spider 2.0：真工作流 + 多方言</span>
+      <span class="arrow">→</span>
+      <span class="step">Agentic 评测</span>
+      <span class="arrow">→</span>
+      <span class="step">揭示 LLM 大缺口</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="construction">
+    <div class="container" style="padding:0;">
+      <h2>2. Benchmark 构建流水线</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① 任务源头</h3>
+          <ul>
+            <li>开源 dbt 项目仓库（公开 repo）</li>
+            <li>BigQuery / Snowflake 公开示例数据集</li>
+            <li>Stack Overflow 上的真实 SQL 问题</li>
+            <li>社区分析平台案例</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>② 标注与质量控制</h3>
+          <ul>
+            <li>由资深数据工程师改写为自然语言任务</li>
+            <li>提供 ground-truth SQL + 期望表/列输出</li>
+            <li>多人交叉审校，确保任务可解</li>
+            <li>每个任务附"上下文文件"（schema dump、dbt 配置等）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>③ 三个评测层</h3>
+          <ul>
+            <li><strong>Spider 2.0</strong>：完整 agentic 任务，需多步执行</li>
+            <li><strong>Spider 2.0-Lite</strong>：简化版，单 SQL 完成</li>
+            <li><strong>Spider 2.0-Snow</strong>：Snowflake 单方言专项</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>④ 评分指标</h3>
+          <ul>
+            <li>SQL 执行结果匹配（行级 / 集合级）</li>
+            <li>容忍列序、行序差异</li>
+            <li>对 dbt 任务允许多步生成与文件修改</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>构建哲学</strong>：拒绝合成数据。所有任务必须是<strong>真实工程师真的写过的</strong>。这让 Spider 2.0 成为"现实主义 benchmark"的旗帜。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>评估对象</h3>
+        <ul>
+          <li>闭源：GPT-4 / GPT-4o / Claude-3 系列</li>
+          <li>开源：Llama-3、Code-Llama、DeepSeek-Coder</li>
+          <li>Agent 框架：ReAct、CodeAct 等</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评测条件</h3>
+        <ul>
+          <li>提供 schema 文件 + 工作目录 + 数据库连接</li>
+          <li>允许多步推理 / 工具调用 / 执行反馈</li>
+          <li>限制最大轮数（agent 预算）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="findings">
+    <div class="container" style="padding:0;">
+      <h2>4. 实证发现：LLM 远未解决企业 NL2SQL</h2>
+
+      <div class="grid grid-4">
+        <div class="metric">
+          <div class="label">Spider 2.0（agent，论文）</div>
+          <div class="value">21.3<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:21.3%;"></div></div>
+          <div class="delta down">论文报告最佳 success rate</div>
+        </div>
+        <div class="metric">
+          <div class="label">GPT-4 直接成功率</div>
+          <div class="value">6<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:6%;"></div></div>
+          <div class="delta down">同模型 Spider 1.0 ≈ 86%</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider 2.0-Snow（peak）</div>
+          <div class="value">59<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:59%;"></div></div>
+          <div class="delta">最强模型在简化 Snowflake 子集</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider 2.0-Lite（peak）</div>
+          <div class="value">38<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:38%;"></div></div>
+          <div class="delta">多平台单 SQL 子集</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：Spider 2.0 论文（<a href="https://arxiv.org/abs/2411.07763" target="_blank">arXiv:2411.07763</a>，ICLR 2025）+ <a href="https://spider2-sql.github.io/" target="_blank">官方 leaderboard</a>。论文明确说明 GPT-4-based agent 仅能解决 21.3% 的 Spider 2.0 任务（"a success rate of only 21.3%"），远低于 Spider 1.0。</p>
+
+      <h3>关键实证发现</h3>
+      <ul>
+        <li><strong>同模型代际差</strong>：相同 LLM 在 Spider 1.0 上接近饱和（&gt;85%），到 Spider 2.0 上骤降。</li>
+        <li><strong>方法迁移失败</strong>：经典 prompt-based 方法直接套用到 Spider 2.0-Snow 上几乎完全失效（第三方 reproduction：DAIL-SQL+GPT-4o = 2.20%、CHESS+GPT-4o = 1.28%、SGU-SQL+GPT-4o = 4.39%）。</li>
+        <li><strong>方言敏感</strong>：BigQuery / Snowflake / DuckDB 之间的函数差异（<code>UNNEST</code> / <code>QUALIFY</code> / <code>WITHIN GROUP</code> 等）是错误高发区。</li>
+        <li><strong>Agent 路线收益明显</strong>：能主动探索 schema、读取元数据、迭代调试的 agent 显著超过单次 prompt 方法。</li>
+        <li><strong>dbt 子集（68 题）几乎全员翻车</strong>：跨文件协同 + 工程语义，对当前 LLM agent 是显著未解决问题。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 任务类型剖析（基于论文结构）</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">注：以下为论文中定义的<strong>三种主要任务形态</strong>，描述基于 Spider 2.0 论文 Section 2/3 与 GitHub 仓库说明，不展示具体测试题以避免泄题。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">形态 1: Spider 2.0（Agent）</button>
+      <button class="tab-btn" data-tab="c2">形态 2: Spider 2.0-Snow / Lite</button>
+      <button class="tab-btn" data-tab="c3">形态 3: Spider 2.0-DBT</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>完整 Agent 工作流</h4>
+      <p>提供：自然语言任务描述 + 一个工作目录（含 schema 文件、元数据文件、有时附 sample 数据）+ 数据库连接。</p>
+      <p>Agent 能力要求：</p>
+      <ul>
+        <li>主动探索元数据（如读 <code>INFORMATION_SCHEMA</code>、列出表、抽样数据）</li>
+        <li>多步生成 + 多步执行 + 错误反馈</li>
+        <li>最终产出可执行的、答案正确的 SQL 或多 SQL 序列</li>
+      </ul>
+      <p>论文实测：GPT-4-based agent 仅 <strong>21.3%</strong> 任务成功，最强 baseline 也大量失败在 schema 探索阶段。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>简化的 Text-to-SQL 子集</h4>
+      <p>论文为方便 NL2SQL 社区直接对比，提供：</p>
+      <ul>
+        <li><strong>Spider 2.0-Lite</strong>：547 题，covering BigQuery / Snowflake / SQLite 等多平台，单次 SQL 形式</li>
+        <li><strong>Spider 2.0-Snow</strong>：547 题，仅 Snowflake 单方言</li>
+      </ul>
+      <p>实测对比（第三方 benchmarking）：DAIL-SQL+GPT-4o 在 Spider 2.0-Snow 仅 <strong>2.20%</strong>、CHESS+GPT-4o <strong>1.28%</strong>、SGU-SQL+GPT-4o <strong>4.39%</strong>；后续专门工作 ReFoRCE 在 Snow 达 <strong>31.26%</strong>、Lite 达 <strong>30.35%</strong>；最强模型在 Snow 上 peak 也只到 <strong>59%</strong>，距 Spider 1.0 接近饱和的 SOTA 差距巨大。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>dbt Code Agent 任务</h4>
+      <p>共 68 题，要求 agent 在已有 dbt 项目中：</p>
+      <ul>
+        <li>新增 / 修改 SQL 模型文件</li>
+        <li>声明 <code>{{ ref(...) }}</code> 依赖、<code>schema.yml</code> 描述与测试</li>
+        <li>触发 <code>dbt run</code> 验证</li>
+      </ul>
+      <p>这是 Spider 2.0 中最难的子集，揭示了 LLM agent 在<strong>多文件协同的工程化任务</strong>上能力远未达标。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 Benchmark 设计哲学</h3>
+          <ul>
+            <li><strong>真实工作流 &gt; 合成数据</strong></li>
+            <li><strong>多方言强制</strong>：让评测反映真实数据栈</li>
+            <li><strong>Agentic 评测</strong>：单 SQL 准确率不再够用</li>
+            <li><strong>多层难度</strong>：Lite / Snow / Full 满足不同研究群体</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 对学界与业界的影响</h3>
+          <ul>
+            <li>2024-2025 多个工作专门"刷 Spider 2.0"</li>
+            <li>从此 NL2SQL 论文必报 Spider 2.0 数字</li>
+            <li>推动了"agent + tool + schema 探索"路线</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>企业落地 NL2SQL 时的"现实期望校准"工具</li>
+            <li>给"端到端 SQL agent"的能力上限画了基线</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>覆盖的真实数据栈仍以英文为主</li>
+            <li>开源场景限制 → 没有真正的"商业敏感"schema</li>
+            <li>评分基于执行结果，对"等价 SQL 但写法不同"宽松，但对"业务正确但行序差异"也可能误判</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2411.07763" target="_blank">arXiv:2411.07763</a>（ICLR 2025 Oral）</li>
+      <li>🌐 主页 / Leaderboard：<a href="https://spider2-sql.github.io/" target="_blank">spider2-sql.github.io</a></li>
+      <li>💻 代码：<a href="https://github.com/RelationalAI/xlang-spider2" target="_blank">github.com/RelationalAI/xlang-spider2</a></li>
+      <li>📑 关联：BIRD / Spider 1.0 / TQA-Bench</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · Spider 2.0 · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

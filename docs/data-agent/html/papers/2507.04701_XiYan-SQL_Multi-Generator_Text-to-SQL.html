@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XiYan-SQL: Multi-Generator Ensemble Framework for Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2507.04701_XiYan-SQL_Multi-Generator_Text-to-SQL.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2507.04701 · 2025</div>
+    <h1>XiYan-SQL: A Multi-Generator Ensemble Framework for Text-to-SQL</h1>
+    <div class="meta">
+      <span>👥 阿里巴巴 XGenerationLab Team</span>
+      <span>🏛️ Alibaba Group</span>
+      <span>📅 2025.07</span>
+    </div>
+    <p class="tagline">
+      阿里巴巴出品的工业级 NL2SQL 多生成器集成框架：
+      <strong>M-Schema</strong> 增强 schema 表征 + <strong>ICL/SFT 双路生成器</strong>多样化候选 +
+      <strong>Schema Filter / Refiner / Selection Model</strong> 三段式精炼。
+      在 BIRD test 达到 <strong>75.63% EX</strong>，Spider test <strong>89.65%</strong>，SQL-Eval <strong>69.86%</strong>，
+      并开源核心模型 <code>XiYanSQL-QwenCoder</code> + M-Schema 代码 + MCP 服务器。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">75.63%</div><div class="label">BIRD Test EX</div></div>
+      <div class="stat"><div class="value">89.65%</div><div class="label">Spider Test EX</div></div>
+      <div class="stat"><div class="value">69.86%</div><div class="label">SQL-Eval（多方言）</div></div>
+      <div class="stat"><div class="value">41.20%</div><div class="label">NL2GQL（图查询）</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 工业落地中纯学术方法的不足</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① Schema 表征过于单薄</h4>
+          <p>仅用 CREATE TABLE 文本（DAIL-SQL/CHESS 风格）丢失了大量企业元信息：列描述、典型值、外键关系、业务约束等。</p>
+        </div>
+        <div>
+          <h4>② 单一生成器的"风格盲区"</h4>
+          <p>纯 ICL 路线（GPT-4 + few-shot）和纯 SFT 路线（自有 NL2SQL 模型）各有强项，单选其一都会丢分。</p>
+        </div>
+        <div>
+          <h4>③ 候选数 vs 多样性的悖论</h4>
+          <p>采样越多 token 越贵，但若候选高度相似（即缺少多样性），则 selection 模块可选择的解空间被压缩。论文动机：需要"<strong>智能多样化</strong>"（多样的生成路径与生成器）而非"暴力多采样"。</p>
+        </div>
+        <div>
+          <h4>④ 工业方言/dialect 不友好</h4>
+          <p>BIRD 是 SQLite，但企业大多用 MySQL/PostgreSQL/Snowflake/Hive，方言迁移损失大。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：用 M-Schema 喂饱模型 + ICL/SFT 双路并发 + 强 Selector 把关</h3>
+      <p>
+        ① 把 schema 升级为<strong>多模态信息容器</strong>（列名 + 类型 + 描述 + 典型值 + 关系）；<br/>
+        ② 同时使用 <strong>In-Context Learning 路线</strong>（强模型 + 精选示例）和 <strong>Supervised Fine-Tuning 路线</strong>（自训练 XiYanSQL-QwenCoder），二者错峰互补；<br/>
+        ③ 用<strong>专门训练的 Selection Model</strong> 在候选间打分，不依赖 self-consistency。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + Raw Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">📋 M-Schema 构建</span>
+      <span class="arrow">→</span>
+      <span class="step">🎯 Schema Filter</span>
+      <span class="arrow">⤵</span>
+      <span class="step">🤖 ICL 生成器</span>
+      <span class="arrow">+</span>
+      <span class="step">🎓 SFT 生成器</span>
+      <span class="arrow">→</span>
+      <span class="step">🔧 Refiner（执行反馈）</span>
+      <span class="arrow">→</span>
+      <span class="step">🏆 Selection Model</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：M-Schema + 多生成器集成</h2>
+
+      <div class="tabs" id="m-tabs">
+        <button class="tab-btn" data-tab="m1">📋 M-Schema</button>
+        <button class="tab-btn" data-tab="m2">🤖 ICL Generator</button>
+        <button class="tab-btn" data-tab="m3">🎓 SFT Generator</button>
+        <button class="tab-btn" data-tab="m4">🏆 Selection Model</button>
+      </div>
+
+      <div class="tab-content" id="m1">
+        <h4>M-Schema：多维度的 schema 增强</h4>
+        <p>区别于只把 schema 序列化为 CREATE 语句，M-Schema 在每张表/列上携带：</p>
+        <ul>
+          <li><strong>名称 + 类型 + 主外键</strong>（基础结构）</li>
+          <li><strong>列描述</strong>（来自 DDL 注释或元数据系统）</li>
+          <li><strong>典型值 (sample values)</strong>（解决"frequency 列实际是月/季度对账周期"这类问题）</li>
+          <li><strong>关系标注</strong>（A.x 与 B.y 是同一实体的不同别名）</li>
+          <li><strong>业务约束</strong>（如"金额需为正"）</li>
+        </ul>
+        <p>论文证明 M-Schema 是 XiYan-SQL 准确率提升的关键来源之一，相关代码已开源。</p>
+      </div>
+
+      <div class="tab-content" id="m2">
+        <h4>ICL（In-Context Learning）生成器</h4>
+        <p>使用强模型（GPT-4 / Claude / 专有大模型）+ 动态示例选择。示例选择策略沿用 DAIL-SQL 的 SQL skeleton 相似度，但在 M-Schema 表征下能找到更精准的语义匹配。</p>
+        <p>该路径的优势：复杂、跨领域、罕见语法的 SQL 生成质量高。</p>
+      </div>
+
+      <div class="tab-content" id="m3">
+        <h4>SFT 生成器：XiYanSQL-QwenCoder</h4>
+        <p>基于 Qwen2.5-Coder 架构，用大规模合成的 NL2SQL 数据（含多方言、思维链、纠错轨迹）SFT 训练。</p>
+        <p>该路径的优势：在常见模式（聚合、JOIN、WINDOW）上稳定且推理成本低；对多方言（MySQL/PG/Snowflake）泛化更好。</p>
+        <p>开源版：<code>XGenerationLab/XiYanSQL-QwenCoder</code>。</p>
+      </div>
+
+      <div class="tab-content" id="m4">
+        <h4>Selection Model：候选选择器</h4>
+        <p>训练一个独立模型对"问题 + schema + 候选 SQL + 执行结果"打分。考虑维度：</p>
+        <ul>
+          <li>SQL 是否能成功执行</li>
+          <li>结果是否非空、是否合理（行数/列数）</li>
+          <li>SQL 与 schema 的 fit 程度</li>
+          <li>同一组候选的相对优劣</li>
+        </ul>
+        <p>对比 self-consistency 多数投票，Selection Model 在多样化候选场景中有显著优势。</p>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：XiYan-SQL 不追求"一个万能生成器"，而是构造"互补的生成池 + 强判别器"。这是一种典型的工业 ensemble 思路：<em>多样性 × 鉴别力 = 综合效果</em>。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>BIRD dev / test</li>
+          <li>Spider 1.0 dev / test</li>
+          <li>SQL-Eval（多方言：MySQL/PG/Snowflake）</li>
+          <li>阿里内部业务 NL2SQL 数据集</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL / MAC-SQL / CHESS / CHASE-SQL</li>
+          <li>Vanna 2.0 / Distyl Distillery</li>
+          <li>纯 ICL（GPT-4 + DAIL-SQL prompt）</li>
+          <li>纯 SFT（CodeLlama / Qwen2.5-Coder）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-4">
+        <div class="metric">
+          <div class="label">BIRD Test EX</div>
+          <div class="value">75.63<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:75.63%;"></div></div>
+          <div class="delta up">论文官方 · 提交时 SOTA</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider Test EX</div>
+          <div class="value">89.65<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:89.65%;"></div></div>
+          <div class="delta up">超越 DAIL-SQL 86.6%</div>
+        </div>
+        <div class="metric">
+          <div class="label">SQL-Eval EX</div>
+          <div class="value">69.86<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:69.86%;"></div></div>
+          <div class="delta up">多方言（MySQL/PG/...）</div>
+        </div>
+        <div class="metric">
+          <div class="label">NL2GQL EX</div>
+          <div class="value">41.20<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:41.2%;"></div></div>
+          <div class="delta up">扩展到图数据库查询</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：XiYan-SQL 论文官方数字（<a href="https://arxiv.org/abs/2507.04701" target="_blank">arXiv:2507.04701</a>）。论文也在 BIRD dev、Spider dev 给出消融分析；具体表格请见原文 Section 4。</p>
+
+      <h3>消融研究</h3>
+      <ul>
+        <li>仅用 ICL 生成器：在罕见 schema 上稳定，但常见模式有"风格漂移"</li>
+        <li>仅用 SFT 生成器：在常见模式高效，但复杂跨域查询有上限</li>
+        <li>ICL + SFT 集成 + Selection Model：综合最优，集成增益显著</li>
+        <li>去掉 M-Schema（仅用 CREATE TABLE）：BIRD-dev 明显下降，因为模型无法理解列语义</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 案例研究</h2>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">Case 1: M-Schema vs CREATE</button>
+      <button class="tab-btn" data-tab="c2">Case 2: ICL/SFT 互补</button>
+      <button class="tab-btn" data-tab="c3">Case 3: Selection Model 救场</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>M-Schema：携带语义元信息的 schema 表征</h4>
+      <p>论文比较了 M-Schema 与 CREATE TABLE 文本表征。M-Schema 在普通 DDL 之外额外携带：</p>
+      <ul>
+        <li>列描述（业务语义、单位、约束）</li>
+        <li>典型/枚举取值（来自数据采样或字典）</li>
+        <li>表/列之间的主外键关系强化标注</li>
+        <li>用 markdown / 结构化格式呈现，便于 LLM 解析</li>
+      </ul>
+      <p>论文消融显示，在保留同样的生成与选择策略下，M-Schema 相比 CREATE TABLE 风格在 BIRD 上有稳定增益 —— 尤其是在含枚举列、缩写列名的题上差距明显。这是 XiYan-SQL 整套系统的"地基"。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>ICL × SFT 的互补性</h4>
+      <p>论文设计中两路生成器各有长处：</p>
+      <ul>
+        <li><strong>SFT 生成器</strong>：在大规模 SFT 数据上训练（含 BIRD/Spider 风格），常见模式（聚合、JOIN、WINDOW）稳定，token 成本低，多方言泛化好；</li>
+        <li><strong>ICL 生成器</strong>：用更强的 LLM + few-shot，对罕见结构（LATERAL、复杂 CTE、跨域 schema）更鲁棒。</li>
+      </ul>
+      <p>Selection Model 综合 schema 适配度 + 执行可行性，从两路候选中挑出最佳版本，相比单路或简单 self-consistency 在 BIRD 上有持续增益。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>Selection Model：多样候选下的稳健选择</h4>
+      <p>论文 Section 3.4 / 4.3 强调：当候选池高度多样（同一题写法差异大但都执行成功）时，self-consistency / majority vote 容易选到"流行但错"的版本。</p>
+      <p>XiYan-SQL Selection Model 的设计：</p>
+      <ul>
+        <li>把 schema 适配（候选 SQL 引用的列是否在 sub-schema 中）作为关键特征；</li>
+        <li>把执行结果 metadata（行数是否合理、列类型是否符合问题）作为信号；</li>
+        <li>训练判别器学习"哪个候选更可能正确"，而非"哪个候选最常见"。</li>
+      </ul>
+      <p>论文实测在多样化候选场景中显著优于 majority vote。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>Schema 是新的特征工程</strong>：M-Schema 极大拓宽了 NL2SQL 上下文</li>
+            <li><strong>ICL × SFT 集成</strong>：互补优于单选</li>
+            <li><strong>判别器值得专门训练</strong>（与 CHASE-SQL 同思想）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>M-Schema 表征范式（已被多家企业系统借鉴）</li>
+            <li>开源 XiYanSQL-QwenCoder 系列模型</li>
+            <li>开源 NL2SQL MCP 服务器，可与 Claude Desktop / Cursor 直接集成</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>阿里云 DAS / Quick BI 的 NL2SQL 后端参考其架构</li>
+            <li>多家国内企业落地直接使用 XiYanSQL-QwenCoder</li>
+            <li>是国内 NL2SQL 领域影响最大的开源项目之一</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>多生成器集成 → 推理成本和延迟较高（多采样 + 多模型）</li>
+            <li>SFT 生成器需要大规模高质量训练数据</li>
+            <li>Spider 2.0 / 千列 schema 等极端场景仍有差距</li>
+            <li>Selection Model 的训练数据成本不低</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2507.04701" target="_blank">arXiv:2507.04701</a></li>
+      <li>💻 模型 / 代码：<a href="https://github.com/XGenerationLab/XiYan-SQL" target="_blank">github.com/XGenerationLab/XiYan-SQL</a></li>
+      <li>🤗 模型权重：<a href="https://huggingface.co/XGenerationLab" target="_blank">XGenerationLab on HuggingFace</a></li>
+      <li>📑 关联：CHASE-SQL（多策略思想）· DAIL-SQL（示例选择）· Agentar-Scale-SQL（同类工业系统，蚂蚁集团）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · XiYan-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

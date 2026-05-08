@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CHASE-SQL: Multi-Path Reasoning &amp; Preference Optimized Selection · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2410.01943_CHASE-SQL_Multi-Path_Reasoning.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2410.01943 · ICLR 2025</div>
+    <h1>CHASE-SQL: Multi-Path Reasoning and Preference Optimized Candidate Selection</h1>
+    <div class="meta">
+      <span>👥 Mohammadreza Pourreza, Hailong Li, Ruoxi Sun, Yeounoh Chung, Shayan Talaei, Gaurav Kakkar, Yu Gan, Amin Saberi, Azalia Mirhoseini, Sercan Arik</span>
+      <span>🏛️ Google Cloud + Stanford</span>
+      <span>📅 2024.10</span>
+    </div>
+    <p class="tagline">
+      首次系统利用 <strong>测试时计算 (Test-Time Compute)</strong> 提升 NL2SQL：
+      用三种"思考策略"分别生成多个 SQL 候选 + <strong>偏好优化训练的 Pairwise Selection Agent</strong> 择优。
+      在 BIRD 测试集达到 <strong>73.0% EX</strong>，是 2024-10 单一系统 SOTA。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">3</div><div class="label">思考策略</div></div>
+      <div class="stat"><div class="value">21</div><div class="label">候选数量</div></div>
+      <div class="stat"><div class="value">73.0%</div><div class="label">BIRD Test EX</div></div>
+      <div class="stat"><div class="value">87.6%</div><div class="label">Spider Test EX</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 单一策略的天花板</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 单 prompt 只覆盖一种推理风格</h4>
+          <p>DIN-SQL、CHESS 都依赖一种主导生成策略（要么分而治之，要么按子句生成），但不同问题适合的策略不同。</p>
+        </div>
+        <div>
+          <h4>② Self-consistency 选不出真正最优</h4>
+          <p>多数投票要求"多数候选都对"，但 SQL 多样化时这个假设很弱（一题 21 个候选可能是 21 种写法）。</p>
+        </div>
+        <div>
+          <h4>③ Few-shot 示例与目标 schema 脱节</h4>
+          <p>训练集示例的 schema 与测试 schema 不同，模型难以"在我自己的 schema 里"举一反三。</p>
+        </div>
+        <div>
+          <h4>④ Test-time compute 未被充分利用</h4>
+          <p>OpenAI o1 启发：让模型多想一会、多采样几次能极大提升性能。NL2SQL 此前没有系统化利用。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：让 LLM 走多条不同的"思维路径"，用偏好学习挑最优</h3>
+      <p>
+        ① <strong>多样化生成</strong>：三种 CoT 风格（分治 / 子句链 / 实例感知合成示例）从不同角度生成 SQL；<br/>
+        ② <strong>偏好优化的选择器</strong>：用 SFT + DPO 在"真实正确的 SQL vs. 错误候选"对上训练 Pairwise Comparator；<br/>
+        ③ <strong>Tournament-style selection</strong>：候选两两 PK 选最强。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">三种思考策略并行</span>
+      <span class="arrow">→</span>
+      <span class="step">21 SQL 候选</span>
+      <span class="arrow">→</span>
+      <span class="step">Filter (执行 + 去重)</span>
+      <span class="arrow">→</span>
+      <span class="step">Pairwise Selection (DPO 训练)</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：三策略生成 + 偏好选择</h2>
+
+      <div class="tabs" id="m-tabs">
+        <button class="tab-btn" data-tab="m1">① Divide-and-Conquer CoT</button>
+        <button class="tab-btn" data-tab="m2">② Chain-of-Query</button>
+        <button class="tab-btn" data-tab="m3">③ Instance-Aware Synthetic Examples</button>
+        <button class="tab-btn" data-tab="m4">④ Pairwise Selection Agent</button>
+
+        <div class="tab-content" id="m1">
+          <h4>策略 1：Divide-and-Conquer CoT</h4>
+          <p>类似 DIN-SQL 的分解，但用 CoT 自然语言形式：</p>
+<pre><code class="language-text">Q: Find departments where avg salary > company avg
+[CoT]
+Step 1: 公司平均工资 = AVG(salary) FROM employees
+Step 2: 各部门平均工资 (GROUP BY dept_id, AVG(salary))
+Step 3: 筛选 step 2 结果 > step 1 结果
+Step 4: JOIN department 拿 name
+[SQL] SELECT d.name FROM ... HAVING AVG(salary) > (SELECT AVG ...)</code></pre>
+          <p>对嵌套查询、聚合 + HAVING、UNION 类问题有效。</p>
+        </div>
+
+        <div class="tab-content" id="m2">
+          <h4>策略 2：Chain-of-Query (按子句生成)</h4>
+          <p>让 LLM 按 SQL 语法子句顺序逐步生成，每一步只关注一个子句：</p>
+<pre><code class="language-text">FROM clause:    employees e JOIN department d ON ...
+WHERE clause:   d.location = 'NY'
+GROUP BY:       d.name
+HAVING:         AVG(e.salary) > 100000
+SELECT:         d.name, AVG(e.salary)
+ORDER BY:       AVG(e.salary) DESC</code></pre>
+          <p>对结构清晰、子句独立性强的问题（如复杂 JOIN + GROUP BY）特别有效。</p>
+        </div>
+
+        <div class="tab-content" id="m3">
+          <h4>策略 3：Instance-Aware Synthetic Examples</h4>
+          <p><strong>创新点</strong>：不依赖训练集示例，而是动态合成"在当前 schema 上"的 few-shot 示例：</p>
+          <ol>
+            <li>读 schema → 让 LLM 自己造 N 道相关问题 + SQL</li>
+            <li>执行所有合成 SQL，过滤错误的</li>
+            <li>用合成的 (Q, SQL) 对作为 few-shot 示例</li>
+          </ol>
+          <p>这避免了"训练 schema ≠ 目标 schema"的迁移损失，论文证明这一策略对小型/罕见 schema 增益最大。</p>
+        </div>
+
+        <div class="tab-content" id="m4">
+          <h4>Pairwise Selection Agent (DPO 训练)</h4>
+          <p>核心创新。训练数据构造：</p>
+          <ul>
+            <li>从 BIRD/Spider 训练集生成大量候选 SQL</li>
+            <li>用执行结果标注"对/错"</li>
+            <li>构造 (问题, schema, SQL_a, SQL_b, 偏好) 三元组</li>
+          </ul>
+          <p>训练目标：用 <strong>SFT + Direct Preference Optimization (DPO)</strong> 训练一个 Comparator，输入两个 SQL 输出"哪个更可能正确"。</p>
+          <p>推理时：21 个候选先去重和执行筛选，剩下的两两 PK，胜者前进，最终选出最优。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：不"造一个更强的生成器"，而是"造一组多样化生成器 + 一个会判优的鉴别器"。这是把 GAN 的 G/D 思想首次清晰地引入 NL2SQL。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>BIRD test (主战场)</li>
+          <li>Spider 1.0 test &amp; SDS</li>
+          <li>Spider 2.0-Snow / 2.0-Lite (初步)</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL, MAC-SQL, CHESS</li>
+          <li>SuperSQL (合成数据 baseline)</li>
+          <li>Self-consistency w/ 21 samples</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">BIRD Test EX</div>
+          <div class="value">73.0<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:73%;"></div></div>
+          <div class="delta up">2024-10 单系统 SOTA（ICLR 2025 论文官方）</div>
+        </div>
+        <div class="metric">
+          <div class="label">提升来源</div>
+          <div class="value">SOTA</div>
+          <div class="bar"><div style="width:100%;"></div></div>
+          <div class="delta up">来自多策略生成 + 偏好选择共同贡献</div>
+        </div>
+        <div class="metric">
+          <div class="label">候选数</div>
+          <div class="value">21</div>
+          <div class="bar"><div style="width:60%;"></div></div>
+          <div class="delta up">论文设置；超过此数边际收益递减</div>
+        </div>
+      </div>
+
+      <h3>消融研究（来自论文 §4 Ablation）</h3>
+      <p>论文系统比较了"三策略 + Pairwise Selector"四个组件被去除时的表现，结论一致地表明：</p>
+      <ul>
+        <li><strong>去除 Pairwise Selection</strong>（改用 majority vote / self-consistency）：是性能下降最大的单一变量，证明 DPO 训练的 selector 比简单投票显著优秀</li>
+        <li><strong>去除任一思考策略</strong>：BIRD-dev 都有可观下降，三策略具有互补性</li>
+        <li><strong>去除 Synthetic Examples</strong>：在分布外/罕见 schema 上影响最大</li>
+      </ul>
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：CHASE-SQL 论文（<a href="https://arxiv.org/abs/2410.01943" target="_blank">arXiv:2410.01943</a> · ICLR 2025）。完整消融数字请见论文 Table 4-5。</p>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 多路径推理 + 偏好选择的失败模式覆盖</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于 CHASE-SQL 论文 Section 3（Method）和 Section 4（Experiments）的设计动机。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">模式 1: 单策略覆盖不全</button>
+      <button class="tab-btn" data-tab="c2">模式 2: majority vote 失效</button>
+      <button class="tab-btn" data-tab="c3">模式 3: 跨域 schema 缺示例</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>三种思考策略的互补性</h4>
+      <p>论文 Section 4.4 分析了 Divide-and-Conquer / Query Plan / Synthetic Examples 三种策略的互补性：</p>
+      <ul>
+        <li>每种策略都有"独家解出"的题（其他两策略都答错）；</li>
+        <li>三策略并集覆盖的题数（即 oracle 上界）<strong>显著高于</strong>任一单策略；</li>
+        <li>oracle 上界与实际 EX 的 gap 由 Pairwise Selector 来填补。</li>
+      </ul>
+      <p>这是论文支持"多样化生成 + 偏好选择"路线的核心实证依据。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>为什么 majority vote 不够</h4>
+      <p>论文消融显示，把 Pairwise Selector 替换为 self-consistency / majority vote 时，性能下降是所有消融中最严重的（Table 5）。原因：</p>
+      <ul>
+        <li>当 21 候选高度多样（不同写法、不同 JOIN 顺序、不同 CTE 结构等价）时，&ldquo;同一答案最多票&rdquo;的假设很弱；</li>
+        <li>错误的 SQL 也可能在多个候选中重复（共同 bug），多数投票放大错误；</li>
+        <li>训练好的 Pairwise Selector（DPO）能稳定区分正确写法与"看起来对但执行错"的写法。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>Synthetic Examples：跨域冷启动</h4>
+      <p>BIRD 的测试库分布与训练库分布存在显著差异（不同领域、不同 schema 风格）。从训练集选 few-shot 不一定对测试 schema 有用。</p>
+      <p>论文 Synthetic Examples 策略：</p>
+      <ul>
+        <li>对当前测试 schema，先让 LLM 自动生成若干"自问-自答"示例（schema 特异）；</li>
+        <li>用执行可行性 / SQL 合法性自检过滤；</li>
+        <li>把通过的示例作为 ICL few-shot 喂回 SQL 生成器，使其&ldquo;<strong>就着当前 schema 风格</strong>&rdquo;来生成。</li>
+      </ul>
+      <p>该策略与 Divide-and-Conquer / Query Plan 形成生成路径多样性，是 21 候选池的来源之一。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>多样性比单点最优更重要</strong></li>
+            <li><strong>判别器值得单独训练</strong></li>
+            <li><strong>Test-time compute 是新的 scaling 维度</strong></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>首次把 DPO / 偏好学习用于 NL2SQL 选择</li>
+            <li>"Instance-Aware Synthetic Examples"成为新范式</li>
+            <li>建立 NL2SQL 测试时扩展定律</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 影响</h3>
+          <ul>
+            <li>ICLR 2025 收录</li>
+            <li>Google Cloud BigQuery NL2SQL 内部参考其架构</li>
+            <li>启发 XiYan-SQL、Agentar-Scale-SQL 等多生成器系统</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>21 候选 × 多策略 = 推理成本 ~10× DIN-SQL</li>
+            <li>Pairwise Selector 在分布外 schema 泛化未验证</li>
+            <li>训练好的 Pairwise Selector 在企业级 schema（如 Spider 2.0）上的泛化未在论文中验证</li>
+            <li>选择器训练数据需大规模 (问题, SQL_a, SQL_b, label)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2410.01943" target="_blank">arXiv:2410.01943</a></li>
+      <li>🌐 项目页：<a href="https://chase-sql.github.io" target="_blank">chase-sql.github.io</a></li>
+      <li>📑 关联：DIN-SQL（分解前驱）· DPO（Rafailov et al., 2023）· XiYan-SQL（多生成器后继）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · CHASE-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

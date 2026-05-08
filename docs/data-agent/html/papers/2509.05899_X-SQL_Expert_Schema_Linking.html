@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X-SQL: Expert Schema Linking and Understanding · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2509.05899_X-SQL_Expert_Schema_Linking.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2509.05899 · 2025.09</div>
+    <h1>X-SQL: Expert Schema Linking and Understanding of Text-to-SQL with Multi-LLMs</h1>
+    <div class="meta">
+      <span>👥 X-SQL Team</span>
+      <span>📅 2025.09</span>
+    </div>
+    <p class="tagline">
+      把 schema linking 从"<strong>列匹配</strong>"升级为"<strong>专家级 schema 理解</strong>"：
+      引入<strong>多 LLM 协作</strong>（不同 LLM 扮演不同专家角色） + <strong>schema 表述深度增强</strong>，
+      在 <strong>Spider-Dev 达到 84.9% EX</strong>，并在 <strong>Spider Test 取得 89.65% SOTA</strong>，
+      是开源-多 LLM 路线下的代表性工作。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">84.9%</div><div class="label">Spider-Dev EX</div></div>
+      <div class="stat"><div class="value">89.65%</div><div class="label">Spider-Test EX (SOTA)</div></div>
+      <div class="stat"><div class="value">Multi-LLM</div><div class="label">不同 LLM 扮演专家</div></div>
+      <div class="stat"><div class="value">Expert</div><div class="label">专家化 schema 理解</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 schema linking 仍然太"机械"</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 把 schema 当字符串匹配</h4>
+          <p>多数方法仅基于列名/描述的相似度过滤，无法捕捉"这张表实际是什么业务实体"的深层语义。</p>
+        </div>
+        <div>
+          <h4>② 单 LLM 兼任多角色</h4>
+          <p>同一个 LLM 既要懂 schema 又要懂 SQL 又要懂业务领域，prompt 内职责混乱。</p>
+        </div>
+        <div>
+          <h4>③ 上下文压缩 vs 信息保留</h4>
+          <p>大型 schema 不能整块塞，但常见的截断/采样会丢业务信息。</p>
+        </div>
+        <div>
+          <h4>④ 跨方言/跨场景泛化弱</h4>
+          <p>同一 schema linking 模块在 Spider（学术 schema）和真实企业 schema 上效果反差大。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：Multi-LLM as Experts + 深度 schema 理解</h3>
+      <p>
+        ① 让<strong>多个 LLM 扮演不同专家角色</strong>（DBA / 业务分析师 / SQL 工程师），各自从不同视角看 schema；<br/>
+        ② 在 schema 表述上做"<strong>深度增强</strong>"——除了名称/描述/典型值，还包括实体推断、表间业务关系；<br/>
+        ③ 各专家投票/汇总后得到鲁棒的 sub-schema。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + Raw Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">🧠 多 LLM 专家并行分析</span>
+      <span class="arrow">→</span>
+      <span class="step">📋 Schema 深度理解</span>
+      <span class="arrow">→</span>
+      <span class="step">🗳️ 专家共识投票</span>
+      <span class="arrow">→</span>
+      <span class="step">⚙️ SQL 生成</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：Multi-LLM Expert System</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Schema Understanding Module</h3>
+          <p>对每张表生成"业务实体描述"：这张表是什么实体？关键字段是什么？常见的 JOIN 模式？业务约束？</p>
+          <p>用 LLM 自动产出可阅读的"schema 业务说明书"。</p>
+        </div>
+        <div class="card">
+          <h3>② Multi-LLM 专家角色</h3>
+          <ul>
+            <li><strong>DBA Expert</strong>：从结构、约束、索引角度评估列相关性</li>
+            <li><strong>Business Analyst</strong>：从业务实体、KPI 角度判断</li>
+            <li><strong>SQL Engineer</strong>：从 SQL 结构（JOIN/GROUP BY 需求）角度推断</li>
+          </ul>
+          <p>不同 LLM（或同一 LLM 加不同 system prompt）独立给出列集合。</p>
+        </div>
+        <div class="card">
+          <h3>③ 共识投票</h3>
+          <p>每个专家给"列重要性评分"。综合策略：</p>
+          <ul>
+            <li>多专家高分 → 必入</li>
+            <li>多专家低分 → 必出</li>
+            <li>意见分歧 → 启发式裁判（用 SQL 生成尝试，看哪个 sub-schema 出 SQL 更稳定）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>④ End-to-End Pipeline</h3>
+          <p>X-SQL 整合 schema understanding → expert linking → SQL 生成 → 自纠错。SQL 生成器同样可由多 LLM 集成（论文 Multi-LLM 配置带来一致增益）。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把"schema linking"从"信息检索问题"提升为"<strong>多专家会诊问题</strong>"。这与软件工程中的代码评审、医学诊断中的多专家会诊思想一致。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>Spider 1.0 dev / test</li>
+          <li>BIRD（dev 系列）</li>
+          <li>Spider2.0-Lite（schema linking 子集）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL（schema linking 起源）</li>
+          <li>RSL-SQL（双向 schema linking）</li>
+          <li>CHESS（检索式 schema linking）</li>
+          <li>单 LLM Schema Linking</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-2">
+        <div class="metric">
+          <div class="label">Spider-Dev EX (Multi-LLM)</div>
+          <div class="value">84.9<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:84.9%;"></div></div>
+          <div class="delta up">论文官方报告</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider-Test EX</div>
+          <div class="value">89.65<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:89.65%;"></div></div>
+          <div class="delta up">论文宣称的 SOTA 数字（开源 + Multi-LLM 路线）</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：X-SQL 论文（<a href="https://arxiv.org/abs/2509.05899" target="_blank">arXiv:2509.05899 v1</a>，Abstract + Table 6）。论文 Table 6 显示 Multi-LLM-based X-SQL 在 Spider-Dev 与 Spider-Test 上持续超过 Single-LLM 配置（"consistently outperforms its single-LLM-based counterpart"）。</p>
+
+      <h3>消融定性结论（论文 Section 4）</h3>
+      <ul>
+        <li>去除 Schema Understanding 模块：业务实体识别错误增多，schema linking precision 下降</li>
+        <li>用单一 LLM 扮演所有专家：综合精度低于多 LLM 协作</li>
+        <li>无共识投票（取并集/交集）：要么 recall 不足要么 precision 不足，二者不可兼得</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 方法 — 多专家协作的失败模式覆盖</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于论文 Section 3，X-SQL 设计的多专家机制专门覆盖以下 schema linking 失败模式：</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">模式 1: 业务语义被忽略</button>
+      <button class="tab-btn" data-tab="c2">模式 2: 单专家偏置</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>结构 OK 但业务错</h4>
+      <p>当问题需要"业务上自然的列"（例如显示用 <code>category_name</code> 而非 <code>category_id</code>）时，仅看 schema 结构的 LLM 容易做出技术正确但业务错误的选择。</p>
+      <p>X-SQL 中：</p>
+      <ul>
+        <li><strong>Schema Understanding 模块</strong>先把表抽象为"业务实体"（实体名 + 关键字段 + 常见 JOIN），让所有专家有共同业务先验；</li>
+        <li><strong>Business-analyst 视角的 expert prompt</strong>专门关注业务可读性需求；</li>
+        <li>共识投票综合 DBA / Business / SQL-engineer 三视角。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>单 LLM 决策抖动</h4>
+      <p>同一题、同一 schema 给同一个 LLM，prompt 顺序或 temperature 微变都会导致不同的列集合。论文统计显示这种"抖动"会显著拉低 schema linking 的稳定性。</p>
+      <p>X-SQL 的应对：</p>
+      <ul>
+        <li><strong>多专家并行 + 投票</strong>，让稳定信号（多专家高分一致同意）成为主信号；</li>
+        <li>对意见分歧的边界列，引入 SQL 生成 + 执行尝试做"最终裁判"。</li>
+      </ul>
+      <p>论文 Table 6 结果显示 Multi-LLM 配置在 Spider-Dev 与 Spider-Test 上相对 Single-LLM 都有稳定增益，证实了多专家路线的鲁棒性。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>专家化角色 prompt</strong> 优于混合角色</li>
+            <li><strong>多 LLM 共识</strong> 比单 LLM 多采样更鲁棒</li>
+            <li><strong>schema 业务化理解</strong> 是 schema linking 的下一阶段</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>提出 Schema Understanding 子模块作为独立组件</li>
+            <li>系统化多 LLM 专家协作模式</li>
+            <li>Spider-Dev 84.9%，开源场景具竞争力</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 影响</h3>
+          <ul>
+            <li>NL2SQL 落地企业场景的实用方法论参考</li>
+            <li>"schema 业务理解"成为新研究热点</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>多 LLM 协作 → 推理成本显著增加</li>
+            <li>专家角色 prompt 需精心设计</li>
+            <li>"业务说明书"自动生成可能引入幻觉</li>
+            <li>BIRD test 与 Spider 2.0 上的表现仍待验证</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2509.05899" target="_blank">arXiv:2509.05899</a></li>
+      <li>📑 关联：RSL-SQL（双向 schema linking）· CHESS（检索式）· DIN-SQL（schema linking 起源）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · X-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

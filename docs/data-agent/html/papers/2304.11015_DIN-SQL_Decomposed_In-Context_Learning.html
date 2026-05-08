@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DIN-SQL: Decomposed In-Context Learning of Text-to-SQL with Self-Correction · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题与洞察</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2304.11015_DIN-SQL_Decomposed_In-Context_Learning.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2304.11015 · NeurIPS 2023</div>
+    <h1>DIN-SQL: Decomposed In-Context Learning of Text-to-SQL with Self-Correction</h1>
+    <div class="meta">
+      <span>👥 Mohammadreza Pourreza, Davood Rafiei</span>
+      <span>🏛️ University of Alberta</span>
+      <span>📅 2023.04</span>
+    </div>
+    <p class="tagline">
+      首次系统地把 NL2SQL 任务"分解为四个子任务"，并加入自纠错机制。
+      用 GPT-4 + 纯 In-Context Learning（不微调）在 Spider 测试集达到 <strong>85.3% EX</strong>，BIRD 达 <strong>55.9% EX</strong>，
+      奠定了后续几乎所有 NL2SQL 方法的"分解 + 纠错"骨架。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">4</div><div class="label">子任务模块</div></div>
+      <div class="stat"><div class="value">85.3%</div><div class="label">Spider Test EX</div></div>
+      <div class="stat"><div class="value">55.9%</div><div class="label">BIRD Dev EX</div></div>
+      <div class="stat"><div class="value">0</div><div class="label">微调参数</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- Problem & Insight -->
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 当时方法的局限</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 单步 Prompt 难以覆盖复杂查询</h4>
+          <p>把整张 schema 一次性塞给 LLM 让它端到端生成 SQL，在 nested query、多表 JOIN、聚合 + GROUP BY HAVING 等复杂模式上错误率高：GPT-4 zero-shot 在 Spider Test 仅 <strong>64.9%</strong> EX，few-shot <strong>67.4%</strong>，远低于当时 fine-tuning SOTA（<a href="https://openreview.net/notes/edits/attachment?id=WyhWX2LvGE&name=pdf" target="_blank">SQL-PaLM 等同期工作的对比表</a>）。</p>
+        </div>
+        <div>
+          <h4>② 缺乏 schema linking 阶段</h4>
+          <p>模型不知道问题"具体涉及哪些表/列"，常引用不存在的列、JOIN 关系混乱。</p>
+        </div>
+        <div>
+          <h4>③ 无错误恢复机制</h4>
+          <p>一次生成即为最终结果，语法/语义错误无法纠正。FT 路线代价高且泛化差。</p>
+        </div>
+        <div>
+          <h4>④ 复杂度不分而治之</h4>
+          <p>简单查询和嵌套查询用同一种 prompt 显然次优；前者只需要 3 张表 + WHERE，后者需要 CoT 才能拆解。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察</h3>
+      <p>
+        <strong>"把 SQL 生成像 Chain-of-Thought 一样分解，让 LLM 在每一步只解决一个清晰子问题，并赋予它检查并修正自己输出的能力。"</strong>
+      </p>
+      <p>这一洞察后来成为 <em>事实上</em> 的 NL2SQL 范式：<code>schema-linking → classify → generate → self-correct</code>。MAC-SQL、CHESS、CHASE-SQL、XiYan-SQL 都是它的"扩展实现"。</p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">复杂 NL 问题</span>
+      <span class="arrow">→</span>
+      <span class="step">Schema Linking（找表/列）</span>
+      <span class="arrow">→</span>
+      <span class="step">Query Classification（easy/non-nested/nested）</span>
+      <span class="arrow">→</span>
+      <span class="step">SQL Generation（按类用不同 prompt）</span>
+      <span class="arrow">→</span>
+      <span class="step">Self-Correction（重读 + 修复）</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <!-- Methodology -->
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法论：四个解耦的 In-Context 模块</h2>
+
+      <h3>2.1 总体架构</h3>
+      <p>DIN-SQL 是一个<strong>无微调</strong>的 prompting 框架，所有"训练"都通过 In-Context few-shot examples 完成。四个模块共享同一个底座 LLM（GPT-4），但 prompt 模板和 few-shot pool 是为每个模块独立精心设计的。</p>
+
+      <div class="tabs" id="method-tabs">
+        <button class="tab-btn" data-tab="m1">① Schema Linking</button>
+        <button class="tab-btn" data-tab="m2">② Classification &amp; Decomposition</button>
+        <button class="tab-btn" data-tab="m3">③ SQL Generation</button>
+        <button class="tab-btn" data-tab="m4">④ Self-Correction</button>
+
+        <div class="tab-content" id="m1">
+          <h4>Schema Linking 模块</h4>
+          <p><strong>目标</strong>：从一个可能含 20+ 张表、上百列的 schema 中，挑出与问题相关的表、列、值。</p>
+          <p><strong>实现</strong>：用 few-shot CoT prompt，让 LLM 输出形如：</p>
+<pre><code class="language-text">Q: "How many heads of the departments are older than 56?"
+Schema_links: [department.head_id = head.head_id,
+               head.age, 56]</code></pre>
+          <p><strong>关键设计</strong>：把"列名 + 字面值常量"显式列在 schema_links 中，相当于让 LLM 提前"想清楚"WHERE 子句会用到的常量，给后续 SQL 生成显式提示。</p>
+        </div>
+
+        <div class="tab-content" id="m2">
+          <h4>Classification &amp; Decomposition 模块</h4>
+          <p><strong>把 SQL 难度分为三类</strong>：</p>
+          <ul>
+            <li><strong>Easy</strong>：单表，无 JOIN，最多简单 WHERE。</li>
+            <li><strong>Non-Nested</strong>：跨多表 JOIN，可能含 GROUP BY/ORDER BY，但无子查询。</li>
+            <li><strong>Nested</strong>：含子查询、UNION、INTERSECT、EXCEPT、CTE 等。</li>
+          </ul>
+          <p>对 <strong>Nested</strong> 类型，模块会进一步把问题"拆成可以独立回答的子问题列表"，并在 prompt 里以 CoT 形式呈现，例如：</p>
+<pre><code class="language-text">Q: "Find names of singers who do not have any songs."
+Sub-Q1: list all singer names
+Sub-Q2: list singers who DO have songs
+Final: Q1 EXCEPT Q2</code></pre>
+          <p>这相当于"问题级 CoT"，让 LLM 把复杂逻辑显式展开。</p>
+        </div>
+
+        <div class="tab-content" id="m3">
+          <h4>SQL Generation 模块（按类分支）</h4>
+          <p>对三类问题分别使用<strong>不同的 prompt 模板和 few-shot 示例池</strong>：</p>
+          <ul>
+            <li><strong>Easy prompt</strong>：仅给出 schema + schema_links，直出 SQL。</li>
+            <li><strong>Non-Nested prompt</strong>：先给"中间推理"（涉及哪几张表如何 JOIN）再给 SQL。</li>
+            <li><strong>Nested prompt</strong>：给出 sub-questions + 每个 sub-question 的 SQL，最后组合。</li>
+          </ul>
+          <p>这种"分类 + 不同 prompt"避免了"用嵌套示例去教简单查询"的反作用，提升了简单查询的准确率（GPT-4 baseline 在简单查询上反而比某些 FT 模型还差，DIN-SQL 修复了这一点）。</p>
+        </div>
+
+        <div class="tab-content" id="m4">
+          <h4>Self-Correction 模块</h4>
+          <p><strong>两种风格</strong>：</p>
+          <ul>
+            <li><strong>Generic</strong>：让 LLM 重新审视生成的 SQL，"如果有错就改，没错就保留"。</li>
+            <li><strong>Gentle</strong>：明确告诉 LLM "SQL 可能有也可能没有错误，请检查并仅在必要时修复"，避免过度修改。</li>
+          </ul>
+          <p>论文发现 <strong>Gentle 显著优于 Generic</strong>：Generic 让 GPT-4 把本来正确的 SQL 改坏，"过度自信纠错"是 LLM 的常见 failure mode。这是后续 self-correction 研究反复验证的现象。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：让每个模块"职责单一、上下文最小"。这与软件工程的"高内聚低耦合"原则不谋而合，也使整个 pipeline 易于诊断（哪个模块失败了一目了然）。
+      </div>
+    </div>
+  </section>
+
+  <!-- Evaluation -->
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li><strong>Spider</strong>：跨域多表 NL2SQL（10K Q / 200 DB）</li>
+          <li><strong>BIRD</strong>：含脏数据 + 外部知识 + 效率（12K Q / 95 DB）</li>
+          <li>Spider-Realistic, Spider-SYN（鲁棒性变体）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评估指标</h3>
+        <ul>
+          <li><strong>EX (Execution Accuracy)</strong>：执行结果与 gold 一致</li>
+          <li><strong>EM (Exact Set Match)</strong>：SQL 文本结构匹配</li>
+          <li><strong>VES</strong>（BIRD）：考虑执行效率的加权分</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>对比基线（论文 Table 4 · Spider）</h3>
+    <p>论文报告 DIN-SQL + GPT-4 在 Spider <strong>Dev 82.8% / Test 85.3% EX</strong>，超过当时主流 fine-tuning 路线（如 RESDSQL-3B + NatSQL、RASAT + PICARD），也明显高于 GPT-4 zero-shot 与 GPT-4 直接 few-shot。</p>
+    <p style="font-size:.85rem; color:var(--text-soft);">完整对比表请参见论文（<a href="https://arxiv.org/abs/2304.11015" target="_blank">arXiv:2304.11015</a> · NeurIPS 2023）Table 4 (Spider) 与 Table 7 (BIRD)。</p>
+  </section>
+
+  <!-- Results -->
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">Spider Test EX</div>
+          <div class="value">85.3<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:85.3%;"></div></div>
+          <div class="delta up">论文官方数字 · 超越当时 FT-SOTA</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider Dev EX</div>
+          <div class="value">82.8<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:82.8%;"></div></div>
+          <div class="delta up">论文 Table 4 · GPT-4 + 完整 DIN-SQL</div>
+        </div>
+        <div class="metric">
+          <div class="label">BIRD Holdout EX</div>
+          <div class="value">55.9<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:55.9%;"></div></div>
+          <div class="delta up">2023 提交时 BIRD 榜首</div>
+        </div>
+      </div>
+
+      <h3>消融实验（Ablation）</h3>
+      <p>论文给出了"逐模块去除"实验，证明四个模块各自的贡献。其结论性发现包括：</p>
+      <ul>
+        <li>移除 <strong>Schema Linking</strong> 对 Spider 准确率影响最大，是收益最高的单一模块</li>
+        <li>移除 <strong>Classification &amp; Decomposition</strong> 主要拖累嵌套查询子集的表现</li>
+        <li>移除 <strong>Self-Correction</strong> 对所有难度等级都有损失，但增益相对较小</li>
+        <li>四个模块协同时整体效果最佳，没有冗余模块</li>
+      </ul>
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：DIN-SQL 论文（<a href="https://arxiv.org/abs/2304.11015" target="_blank">arXiv:2304.11015</a> · NeurIPS 2023）。具体消融数字详见论文 Table 4。</p>
+      <p><strong>关键发现</strong>：Schema Linking 是收益最大的单一模块。这一发现激发了 RSL-SQL、X-SQL、CHESS 等一系列后续工作把 schema linking 单独做精做细。</p>
+    </div>
+  </section>
+
+  <!-- Case Studies -->
+  <section class="block" id="cases">
+    <h2>5. 案例研究</h2>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">Case 1: Nested Query</button>
+      <button class="tab-btn" data-tab="c2">Case 2: Self-Correction Save</button>
+      <button class="tab-btn" data-tab="c3">Case 3: Failure Mode</button>
+
+      <div class="tab-content" id="c1">
+        <h4>Case: "List the names of singers who do not have any songs."</h4>
+        <p><strong>① Schema Linking</strong> 输出：<code>singer.name, singer.singer_id, song.singer_id</code></p>
+        <p><strong>② Classification</strong>：判定为 Nested（涉及"否定"，需要 EXCEPT 或 NOT EXISTS）。</p>
+        <p><strong>③ Decomposition</strong>：</p>
+        <ul>
+          <li>Sub-Q1: 列出所有 singer 的 name</li>
+          <li>Sub-Q2: 列出有 song 的 singer 的 name</li>
+          <li>Final = Sub-Q1 EXCEPT Sub-Q2</li>
+        </ul>
+        <p><strong>④ SQL Generation</strong>：</p>
+<pre><code class="language-sql">SELECT name FROM singer
+EXCEPT
+SELECT s.name FROM singer s JOIN song g ON s.singer_id = g.singer_id;</code></pre>
+        <p>对照直接用 GPT-4 zero-shot 生成的版本经常写成 <code>WHERE singer_id NOT IN (...)</code>，遇到 NULL 子查询时会得到错误结果。DIN-SQL 通过 EXCEPT 风格 + 显式拆解避免了这一坑。</p>
+      </div>
+
+      <div class="tab-content" id="c2">
+        <h4>Self-Correction：Generic vs Gentle 的关键发现</h4>
+        <p>论文 Self-Correction 模块对比了两种风格：</p>
+        <ul>
+          <li><strong>Generic prompt</strong>：要求 LLM 主动找 SQL 中的错误并修复。</li>
+          <li><strong>Gentle prompt</strong>：明确告诉 LLM"SQL 可能有错也可能没错，只在确信有错时再改"。</li>
+        </ul>
+        <p>论文 Section 4 的实验证明 Gentle 显著优于 Generic：Generic 让 GPT-4 把<strong>本来正确的 SQL 改坏</strong>，"过度自信纠错"在所有难度等级都拉低准确率。这一发现被后续 CHESS（Unit-Test-based Selection）、CHASE-SQL（Pairwise Comparison）等工作引用作为"为什么不能简单依赖 self-correction"的依据。</p>
+      </div>
+
+      <div class="tab-content" id="c3">
+        <h4>Failure Mode: Schema Linking 是头号瓶颈</h4>
+        <p>论文消融研究（Table 4）显示：在四个模块中，<strong>移除 Schema Linking 对最终 EX 影响最大</strong>，是单一收益最高的模块。</p>
+        <p>论文 Error Analysis 部分指出 Schema Linking 错误的两大典型形态：</p>
+        <ul>
+          <li>当 schema 中存在多个语义相近的列（如多个时间戳列、多个 ID 列）时，linking 容易选错列；</li>
+          <li>当问题字面与列名不直接匹配时（业务别名、缩写），linking 容易漏列。</li>
+        </ul>
+        <p>这正是后续工作 RSL-SQL（双向 schema linking + binary voting）、CHESS（检索 + filter）、X-SQL（多 LLM 专家化）专门攻关的方向。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Insights -->
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>分而治之 &gt; 单步生成</strong>：把复杂任务切成 LLM 擅长的小问题。</li>
+            <li><strong>提示工程是新的特征工程</strong>：DIN-SQL 没改一个参数就刷了 SOTA。</li>
+            <li><strong>Self-Correction 要"温柔"</strong>：过度自信纠错会越改越差。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>首个把 NL2SQL 系统拆为 4 模块的 ICL 框架</li>
+            <li>"按难度分类用不同 prompt"成为标准做法</li>
+            <li>"Sub-question Decomposition"启发了 MAC-SQL Decomposer Agent</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>开源代码 <code>github.com/MohammadrezaPourreza/Few-shot-NL2SQL-with-prompting</code></li>
+            <li>被 <strong>200+ 后续论文</strong>引用为基线</li>
+            <li>商业产品（Snowflake Cortex、PingCAP 等）的 SQL Agent 沿用其架构</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限与未来</h3>
+          <ul>
+            <li>Schema Linking 在大型 schema（千列）上失效 → CHESS、X-SQL</li>
+            <li>所有模块都依赖 GPT-4，成本高 → SQL-R1 用 RL 训练小模型</li>
+            <li>无交互能力，无法处理歧义问题 → BIRD-Interact</li>
+            <li>真实场景方言/dbt 等不支持 → Spider 2.0</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- References -->
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2304.11015" target="_blank">arXiv:2304.11015</a></li>
+      <li>💻 代码：<a href="https://github.com/MohammadrezaPourreza/Few-shot-NL2SQL-with-prompting" target="_blank">GitHub</a></li>
+      <li>📊 Spider Benchmark：<a href="https://yale-lily.github.io/spider" target="_blank">Yale Spider</a></li>
+      <li>📊 BIRD Benchmark：<a href="https://bird-bench.github.io/" target="_blank">bird-bench.github.io</a></li>
+      <li>📑 后续工作：MAC-SQL · CHESS · CHASE-SQL · XiYan-SQL（均沿用其分解骨架）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · DIN-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

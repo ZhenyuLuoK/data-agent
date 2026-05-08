@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SQL-Trail: Multi-Turn RL with Interleaved Feedback for Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2601.17699" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2601.17699 · 2026.01 · Amazon AGI</div>
+    <h1>SQL-Trail: Multi-Turn Reinforcement Learning with Interleaved Feedback for Text-to-SQL</h1>
+    <div class="meta">
+      <span>👥 Harper Hua, Zhen Han, Zhengyuan Shen, ..., Vassilis Ioannidis, Huzefa Rangwala（12 作者）</span>
+      <span>🏛️ Amazon AGI</span>
+      <span>📅 2026.01</span>
+    </div>
+    <p class="tagline">
+      把 Text-to-SQL 从"<strong>单步翻译</strong>"重新表述为"<strong>多轮交互推理</strong>"。
+      在 RL 训练框架中让 Agent 与 DB 真实交互（执行、看反馈、再修正）。两大关键设计：
+      ① <strong>自适应 turn-budget</strong>，按题目难度动态分配交互轮数；
+      ② <strong>复合 reward panel</strong>，同时激励 SQL 正确性与高效探索。
+      在 BIRD-SQL 等 benchmark 上设新 SOTA；
+      <strong>data efficiency 高出单步 RL SOTA 最高 18×</strong>；
+      7B/14B 模型平均 <strong>超大私有系统 5%</strong>。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">18×</div><div class="label">数据效率提升 (vs 单步 RL SOTA)</div></div>
+      <div class="stat"><div class="value">+5%</div><div class="label">7B/14B 超大私有系统平均</div></div>
+      <div class="stat"><div class="value">SOTA</div><div class="label">BIRD-SQL 等多 benchmark</div></div>
+      <div class="stat"><div class="value">Multi-Turn</div><div class="label">真实 DB 交互</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 单步 Text-to-SQL 的固有瓶颈</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 缺乏迭代推理</h4>
+          <p>人类专家面对复杂查询时，会反复"试探-观察-修正"：先看 schema、查几行数据、写一版 SQL、看错误信息再改。<strong>单步 LLM 一次性出 SQL</strong>，根本没机会做这种 iterative reasoning。</p>
+        </div>
+        <div>
+          <h4>② 缺乏 schema 探索</h4>
+          <p>真实 DB 有几十上百张表 + 几百列。专家会通过 <code>SELECT col FROM table LIMIT 5</code> 先看实际值再写。单步生成只能基于 schema 文本盲猜。</p>
+        </div>
+        <div>
+          <h4>③ 缺乏 error-correction</h4>
+          <p>SQL 写错（列名拼错、JOIN 条件不对、类型不匹配）后单步 LLM 没有机会改 —— 即使 CHESS / MAC-SQL 那种 self-refine 也只在生成阶段做一两轮，没融入 RL 训练目标。</p>
+        </div>
+        <div>
+          <h4>④ 单步 RL 数据效率低</h4>
+          <p>已有的 SQL-R1 等单步 RL 方法把"一步生成一条 SQL"作为训练单元，每条训练样本只能学一个 reward 信号；样本利用率有限。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：把 Text-to-SQL 训成"<strong>多轮交互 RL agent</strong>"</h3>
+      <p>
+        SQL-Trail 把 SQL 生成视为 agent 与 DB 环境的 multi-turn 交互过程。每轮 agent 可以选择
+        ① 执行 SQL 看结果，② 探索 schema/sample 数据，③ 提交最终答案。
+        通过 RL 直接优化 agent 在<strong>整条交互轨迹</strong>上的行为，使其学会人类式的"试探-观察-修正"。
+        关键创新：自适应 turn-budget 让简单题快速结束、复杂题深入探索；复合 reward 同时奖励正确性与<strong>探索效率</strong>，避免无意义反复执行。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">NL Question</span>
+      <span class="arrow">→</span>
+      <span class="step">🤖 Agent: think</span>
+      <span class="arrow">↻</span>
+      <span class="step">⚙️ Execute / Probe DB</span>
+      <span class="arrow">↻</span>
+      <span class="step">👀 Observe Feedback</span>
+      <span class="arrow">→</span>
+      <span class="step">✅ Final SQL + Reward</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：Multi-Turn RL 框架</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① 多轮交互范式</h3>
+          <p>每一步 agent 输出一个 action：</p>
+          <ul>
+            <li><strong>Probe</strong>：执行探索性 SQL（查列、查样本、查 distinct 值）</li>
+            <li><strong>Try</strong>：执行候选 SQL 看结果</li>
+            <li><strong>Submit</strong>：提交最终答案</li>
+          </ul>
+          <p>Action 后 DB 返回 observation（结果集 / 错误信息）。Agent 据此进入下一轮。</p>
+        </div>
+
+        <div class="card">
+          <h3>② Adaptive Turn-Budget Allocation</h3>
+          <p>关键观察：BIRD 中题目难度差异极大（简单聚合 vs 多表嵌套）。固定 turn 数有两个问题：</p>
+          <ul>
+            <li>给简单题太多轮 → 浪费 compute、增加幻觉</li>
+            <li>给难题太少轮 → 无法收敛</li>
+          </ul>
+          <p>SQL-Trail 设计 <strong>自适应 budget 机制</strong>：根据问题难度动态决定该题最多探索几轮，使训练 / 推理 compute 更高效。</p>
+        </div>
+
+        <div class="card">
+          <h3>③ Composite Reward Panel</h3>
+          <p>不是单一"对错 0/1"，而是<strong>多维度奖励</strong>：</p>
+          <ul>
+            <li><strong>Correctness reward</strong>：最终 SQL 执行结果是否正确</li>
+            <li><strong>Efficiency reward</strong>：交互轮数是否经济（用 turn-budget 归一化）</li>
+            <li><strong>Exploration reward</strong>：probing 是否带来真正信息增益</li>
+          </ul>
+          <p>这个组合避免了 agent 学到"无脑反复试错"或"轻易 submit 错答案"两种 degenerate 行为。</p>
+        </div>
+
+        <div class="card">
+          <h3>④ Multi-Turn RL 训练</h3>
+          <p>训练单元从"单条 SQL"升级为"完整交互轨迹"：</p>
+          <ul>
+            <li>每条 trajectory 给一个 reward 序列；</li>
+            <li>用 PPO/GRPO 风格的多轮 RL 算法优化策略；</li>
+            <li>共享相同的"问题-DB pair"在不同轨迹下能给出多个学习信号 → 数据效率比单步 RL 提升最高 <strong>18×</strong>。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把 Text-to-SQL 从 "<em>NLP 翻译问题</em>" 重新框定为 "<em>agent 与数据库的交互推理问题</em>" —— 这是与 CHESS、CHASE-SQL、XiYan-SQL（在<em>推理时</em>引入交互）相比，<strong>把交互直接放进训练目标</strong>的关键差异。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li><strong>BIRD-SQL</strong>：复杂业务 schema 与人类专家差距评测的主战场</li>
+          <li><strong>Spider</strong>：跨域 NL2SQL 经典 benchmark</li>
+          <li>论文 abstract 强调"across benchmarks ... new state of the art"</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>单步 RL SOTA（如 SQL-R1）—— data efficiency 对比</li>
+          <li>大型闭源模型（GPT-4 / Claude 等大模型）—— 参数 vs 性能 trade-off</li>
+          <li>同期 multi-turn 方法（如 MTIR-SQL）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">Data Efficiency vs 单步 RL SOTA</div>
+          <div class="value">18×</div>
+          <div class="bar"><div style="width:95%;"></div></div>
+          <div class="delta up">显著样本利用率提升</div>
+        </div>
+        <div class="metric">
+          <div class="label">7B/14B vs 大型私有系统</div>
+          <div class="value">+5%</div>
+          <div class="bar"><div style="width:80%;"></div></div>
+          <div class="delta up">小模型反超</div>
+        </div>
+        <div class="metric">
+          <div class="label">BIRD-SQL / Spider</div>
+          <div class="value">SOTA</div>
+          <div class="bar"><div style="width:90%;"></div></div>
+          <div class="delta up">"new state of the art"</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：SQL-Trail 论文 abstract（<a href="https://arxiv.org/abs/2601.17699" target="_blank">arXiv:2601.17699</a>）。原文："SQL-Trail sets a new state of the art and delivers strong data efficiency--up to 18x higher than prior single-pass RL state-of-the-art methods. Notably, our 7B and 14B models outperform substantially larger proprietary systems by 5% on average."</p>
+
+      <h3>关键发现</h3>
+      <ul>
+        <li><strong>Multi-turn &gt; Single-pass</strong>：交互能让小模型显著缩窄与大模型的差距</li>
+        <li><strong>Data efficiency 大幅提升</strong>：每条数据带来更多训练信号 → 训练成本下降</li>
+        <li><strong>Adaptive turn-budget 重要</strong>：固定 budget 在简单题浪费、难题欠缺</li>
+        <li><strong>复合 reward 必要</strong>：单一 correctness reward 会出现 degenerate 行为（盲猜 / 无意义试探）</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 多轮交互能解决的失败模式</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于 SQL-Trail 论文动机部分。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">模式 1: 不知道列实际值分布</button>
+      <button class="tab-btn" data-tab="c2">模式 2: JOIN 路径不确定</button>
+      <button class="tab-btn" data-tab="c3">模式 3: 错误信息驱动修正</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>列值分布探查</h4>
+      <p>当用户问"销量最高的 5 个类别"时，类别可能存在 <code>category</code> 列的某个枚举值集合。单步生成的 SQL 必须直接猜列名 + 写 GROUP BY；但如果 category 是层级的（"电子/手机/智能机"），需要先选粒度。</p>
+      <p>SQL-Trail 的 agent 可以先 <code>SELECT DISTINCT category FROM ... LIMIT 20</code> 看实际取值再决定 GROUP BY 字段。这种 schema exploration 能力是单步生成无法获得的。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>多表 JOIN 路径选择</h4>
+      <p>大 schema 中两张表可能有多条 JOIN 路径（直接外键 vs 经中间表）。哪条对当前问题更合适，需要看实际数据基数与索引情况。</p>
+      <p>Multi-turn agent 可以试不同 JOIN 写法，看返回行数 / 执行成功与否，选最合适的。这种"以执行结果验证假设"的能力是 SQL-Trail 与单步方法的本质差异。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>从执行错误信息中学</h4>
+      <p>错误信息（"column X does not exist", "ambiguous column"）含有正确做法的强信号。Multi-turn 训练让 agent 学会<strong>读错误信息</strong>，而单步方法只能依赖事后 self-refine。</p>
+      <p>SQL-Trail 的 reward 设计鼓励 agent 在"看到错误信息 → 给出修复"路径上获得正向激励，自然学会该行为。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>Text-to-SQL 不是翻译，是交互推理</strong></li>
+            <li>把"试探"作为 first-class action</li>
+            <li>RL reward 必须是复合的，单一 reward 会被 hack</li>
+            <li>训练分布要覆盖真实交互轨迹，不只是 (Q, SQL) pair</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>Multi-turn RL 框架的规范化设计</li>
+            <li>Adaptive turn-budget 机制</li>
+            <li>Composite reward panel 的工程实现</li>
+            <li>验证小模型 (7B/14B) 通过交互可超大模型</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>对企业级 NL2SQL 部署有重要意义：私有 7B/14B 模型 + 多轮交互即可对标 GPT-4</li>
+            <li>降低算力门槛，提升数据 efficient 训练的可能性</li>
+            <li>启发后续工作（如 TRUST-SQL）继续在多轮 RL 方向深入</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>多轮训练的 wall-time 高于单步 RL（虽然 sample efficiency 好）</li>
+            <li>真实 DB 交互需要 sandbox / safety guard，工程复杂度高</li>
+            <li>对超大 schema (Spider 2.0 级) 的扩展性需要进一步验证</li>
+            <li>composite reward 的权重调参依然是 art，可能需要按 benchmark 调整</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2601.17699" target="_blank">arXiv:2601.17699</a></li>
+      <li>📑 关联工作：MTIR-SQL（同期 multi-turn）· SQL-R1（单步 RL 基线）· TRUST-SQL（后续 tool-integrated multi-turn RL）</li>
+      <li>🔗 与本论文集其他工作的关系：与 CHESS / CHASE-SQL / XiYan-SQL（推理时多轮）形成对比 —— SQL-Trail 把多轮放进训练目标</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · SQL-Trail · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

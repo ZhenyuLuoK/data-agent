@@ -24,7 +24,7 @@ htmlcov/
 data/
 # Local data, docs, tests, and artifacts
 !artifacts/.gitkeep
-docs/
+
 # Local configs
 !configs/react_baseline.example.yaml
 

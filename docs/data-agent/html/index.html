@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Agent 论文总结集 · NL2SQL / Data Analysis Agent / TableQA</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/base.css" />
+</head>
+<body>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="inner">
+    <h1>Data Agent 论文总结集</h1>
+    <div class="meta">
+      <span>📅 2024-2026 精选 20 篇</span>
+      <span>📚 NL2SQL · Data Analysis Agent · TableQA · Benchmark · Survey</span>
+      <span>🎯 学术 + 工程 + 产品全景</span>
+    </div>
+    <p class="tagline">
+      围绕「让非技术用户用自然语言访问数据」这一目标，
+      系统梳理 2023-2026 年 Data Agent 领域 20 篇代表性论文：
+      从 NL2SQL 经典范式 (DIN-SQL / DAIL-SQL / MAC-SQL)、
+      到 SOTA 系统 (CHESS / CHASE-SQL / XiYan-SQL)、
+      Schema Linking 新范式 (RSL-SQL / X-SQL)、
+      企业级 Benchmark (Spider 2.0 / TQA-Bench)、
+      数据科学 Agent (Data Interpreter / DB-GPT / AgentAda)、
+      Survey 与 Data Agent 自主性分级。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">20</div><div class="label">论文数量</div></div>
+      <div class="stat"><div class="value">7</div><div class="label">主题分类</div></div>
+      <div class="stat"><div class="value">2023-26</div><div class="label">时间跨度</div></div>
+      <div class="stat"><div class="value">L0-L5</div><div class="label">Data Agent 自主性等级</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- Search -->
+  <section class="block">
+    <h2>📑 全部论文（按主题分类）</h2>
+    <p style="color:var(--text-soft); margin-top:-.5rem;">
+      点击卡片进入详细总结页面。每篇总结包含：核心问题与洞察 / 方法论与架构 / 评估框架 / 关键结果 / 案例分析 / 启发与未来方向。
+    </p>
+    <input id="paper-search" type="search" placeholder="🔍 搜索论文标题、关键词、作者…"
+      style="width:100%; max-width:480px; padding:.7rem 1rem; border:1px solid var(--border); border-radius:10px; font-size:.95rem; margin:.5rem 0 1rem;" />
+
+    <!-- Category 1: NL2SQL Classic Paradigms -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">🧱</span>
+        <h2>NL2SQL 经典范式（任务分解 / Prompt / 多 Agent）</h2>
+        <span class="count">3 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2304.11015_DIN-SQL_Decomposed_In-Context_Learning.html">
+          <div class="arxiv-id">arXiv:2304.11015 · NeurIPS 2023</div>
+          <h3>DIN-SQL: Decomposed In-Context Learning of Text-to-SQL with Self-Correction</h3>
+          <div class="summary">首次系统拆解 NL2SQL 为 Schema Linking → Classification → Generation → Self-Correction 四模块。GPT-4 在 Spider 达 85.3%、BIRD 达 55.9%。确立后续所有方法的方法论范式。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Decomposition</span><span class="tag tag-purple">Self-Correction</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2308.15363_DAIL-SQL_Text-to-SQL_LLM_Benchmark.html">
+          <div class="arxiv-id">arXiv:2308.15363 · VLDB 2024</div>
+          <h3>Text-to-SQL Empowered by LLMs: A Benchmark Evaluation (DAIL-SQL)</h3>
+          <div class="summary">系统研究 prompt engineering 5 维度：问题表示、组件、示例选择、组织。Code Representation + skeleton 选例 + SQL 同时给出三连击，Spider 86.6% 刷新榜单。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Prompt Eng.</span><span class="tag tag-orange">ICL</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2312.11242_MAC-SQL_Multi-Agent_Text-to-SQL.html">
+          <div class="arxiv-id">arXiv:2312.11242 · COLING 2025</div>
+          <h3>MAC-SQL: A Multi-Agent Collaborative Framework for Text-to-SQL</h3>
+          <div class="summary">把 DIN-SQL 的模块"实体化"为 Selector / Decomposer / Refiner 三 Agent，BIRD 测试集 59.59% EX。开创 NL2SQL 多 Agent 协作范式。</div>
+          <div class="footer">
+            <span><span class="tag tag-green">Multi-Agent</span><span class="tag tag-purple">Self-Refine</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 2: SOTA NL2SQL -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">🚀</span>
+        <h2>SOTA NL2SQL 系统（多生成器 / 测试时扩展 / 偏好选择）</h2>
+        <span class="count">4 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2405.16755_CHESS_Contextual_Harnessing_for_SQL.html">
+          <div class="arxiv-id">arXiv:2405.16755 · ICLR 2025</div>
+          <h3>CHESS: Contextual Harnessing for Efficient SQL Synthesis</h3>
+          <div class="summary">面向真实大规模数据库：LSH+嵌入检索做 Entity & Context Retrieval，多轮 schema 过滤，Unit-Test 化候选选择。BIRD ~68% EX，token 显著优化。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Schema Retrieval</span><span class="tag tag-pink">Unit Test</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2410.01943_CHASE-SQL_Multi-Path_Reasoning.html">
+          <div class="arxiv-id">arXiv:2410.01943 · ICLR 2025</div>
+          <h3>CHASE-SQL: Multi-Path Reasoning &amp; Preference-Optimized Selection</h3>
+          <div class="summary">三种思考策略生成多候选（Divide-and-Conquer CoT / Chain-of-Query / Instance-Aware Synthetic Examples），Pairwise Selection Agent 偏好优化择优。BIRD 73.0%。</div>
+          <div class="footer">
+            <span><span class="tag tag-orange">Test-Time Scaling</span><span class="tag tag-green">Preference</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2507.04701_XiYan-SQL_Multi-Generator_Text-to-SQL.html">
+          <div class="arxiv-id">arXiv:2507.04701 · 2025</div>
+          <h3>XiYan-SQL: Multi-Generator Ensemble Framework (阿里巴巴)</h3>
+          <div class="summary">M-Schema 表征 + ICL/SFT 多生成器 ensemble + Schema Filter + Refiner + Selection Model。把 BIRD dev 推到 75%+，强调"高准确 + 高多样性"。</div>
+          <div class="footer">
+            <span><span class="tag tag-purple">Ensemble</span><span class="tag tag-blue">M-Schema</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2509.24403_Agentar_Test-Time_Scaling_Text-to-SQL.html">
+          <div class="arxiv-id">arXiv:2509.24403 · 2025</div>
+          <h3>Agentar-Scale-SQL: Test-Time Scaling + Synthetic Data (蚂蚁集团)</h3>
+          <div class="summary">大规模合成数据训练 + 多 Agent 测试时扩展 + 自纠错。BIRD test ≈ 82% EX，与人类专家基线 92.96% 缩窄至 10pt 内。</div>
+          <div class="footer">
+            <span><span class="tag tag-orange">TTS</span><span class="tag tag-green">Synthetic Data</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 3: Schema Linking -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">🔗</span>
+        <h2>Schema Linking 专项（让模型"找对表/列"）</h2>
+        <span class="count">2 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2411.00073_RSL-SQL_Robust_Schema_Linking.html">
+          <div class="arxiv-id">arXiv:2411.00073 · 2024</div>
+          <h3>RSL-SQL: Robust Schema Linking</h3>
+          <div class="summary">提出双向 schema linking + 上下文自增强 + 二元投票，缓解传统 schema linking 的高漏检率（recall &gt; 0.95），BIRD dev 67.2% EX。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Schema Linking</span><span class="tag tag-purple">Robustness</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2509.05899_X-SQL_Expert_Schema_Linking.html">
+          <div class="arxiv-id">arXiv:2509.05899 · 2025</div>
+          <h3>X-SQL: Expert Schema Linking via LLM-as-Filter</h3>
+          <div class="summary">把 schema linking 形式化为 LLM 过滤问题，用专家化 prompt + 双阶段过滤极大压缩 schema 上下文，在大表场景保持高 recall。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">LLM-as-Filter</span><span class="tag tag-orange">Long Context</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 4: Benchmark -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">📊</span>
+        <h2>Benchmark / 评测（企业级与多表 QA）</h2>
+        <span class="count">2 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2411.07763_Spider2.0_Real_World_Enterprise_Text_to_SQL.html">
+          <div class="arxiv-id">arXiv:2411.07763 · ICLR 2025 Oral</div>
+          <h3>Spider 2.0: Evaluating LLMs on Real-World Enterprise Text-to-SQL</h3>
+          <div class="summary">632 真实企业级任务、Snowflake/BigQuery/dbt repo、千列 schema。GPT-5 仅 30-50%，揭示 BIRD 与企业落地的鸿沟。</div>
+          <div class="footer">
+            <span><span class="tag tag-pink">Enterprise</span><span class="tag tag-orange">Multi-dialect</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2411.19504_TQA-Bench_Multi_Table_QA.html">
+          <div class="arxiv-id">arXiv:2411.19504 · 2024</div>
+          <h3>TQA-Bench: A Multi-Table Question Answering Benchmark</h3>
+          <div class="summary">系统评估 LLM 在多跳、多表 JOIN、长上下文表格问答下的能力，证明通用 LLM 普遍 &lt; 50%，schema linking + 多表推理仍是瓶颈。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">TableQA</span><span class="tag tag-purple">Multi-Table</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 5: Data Agent / DS Agent -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">🤖</span>
+        <h2>Data Agent / 数据科学 Agent（自动 EDA / 多 Agent / 工业系统）</h2>
+        <span class="count">3 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2402.18679_Data_Interpreter_LLM_Agent.html">
+          <div class="arxiv-id">arXiv:2402.18679 · MetaGPT</div>
+          <h3>Data Interpreter: An LLM Agent for Data Science</h3>
+          <div class="summary">基于 MetaGPT 的数据科学 Agent：动态计划图（DAG）、工具集成增强（TIE）、案例驱动反思。机器学习自动建模、可视化、报告全链路。</div>
+          <div class="footer">
+            <span><span class="tag tag-green">DS Agent</span><span class="tag tag-purple">Plan-DAG</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2312.17449_DB-GPT_Empowering_Database_Interactions.html">
+          <div class="arxiv-id">arXiv:2404.10209 · 2024</div>
+          <h3>DB-GPT: Next Generation Data Interaction System (蚂蚁开源)</h3>
+          <div class="summary">面向企业的数据交互平台：AWEL DSL 编排、Agent Workflow Expression Language、SMMF 多模型适配、知识库 RAG、Sandbox 执行。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Industry</span><span class="tag tag-orange">Open Source</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2504.07421_AgentAda_Skill_Adaptive_Data_Analytics.html">
+          <div class="arxiv-id">arXiv:2504.07421 · 2025</div>
+          <h3>AgentAda: Skill-Adaptive Data Analytics Agent</h3>
+          <div class="summary">通过技能库 (skill library) 自适应选择数据分析技能（聚类、预测、异常检测等），支持冷启动数据集自动 EDA + 洞察生成。</div>
+          <div class="footer">
+            <span><span class="tag tag-pink">Skill Library</span><span class="tag tag-green">Auto-EDA</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 6: Survey -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">📚</span>
+        <h2>Survey &amp; 全景综述</h2>
+        <span class="count">3 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2508.00217_Tabular_Data_Understanding_Survey.html">
+          <div class="arxiv-id">arXiv:2508.00217 · 2025</div>
+          <h3>Tabular Data Understanding with LLMs: A Survey</h3>
+          <div class="summary">系统综述 LLM 处理表格的范式：序列化、表格预训练（TAPAS/TAPEX）、表格 RAG、Agent 化表格分析。给出能力分类表与 benchmark 全貌。</div>
+          <div class="footer">
+            <span><span class="tag tag-gray">Survey</span><span class="tag tag-blue">Tabular</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2508.02744_LLM_Data_Science_Agent_Survey.html">
+          <div class="arxiv-id">arXiv:2508.02744 · 2025</div>
+          <h3>A Survey on LLM-Based Data Science Agents</h3>
+          <div class="summary">梳理 DS Agent 的能力栈：规划、工具调用、代码执行、自纠错、多 Agent 协作；对比 Data Interpreter、AutoGen、LangGraph、PandasAI 等系统。</div>
+          <div class="footer">
+            <span><span class="tag tag-gray">Survey</span><span class="tag tag-green">DS Agent</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2602.04261_Data_Agents_Levels.html">
+          <div class="arxiv-id">arXiv:2602.04261 · SIGMOD 2026 Tutorial</div>
+          <h3>Data Agents: Levels, State of the Art, and Open Problems</h3>
+          <div class="summary">HKUST/清华联合提出 Data Agent 自主性分级 L0-L5（类比自动驾驶 SAE）。当前主流商业产品集中 L2-L3，L5 仍开放。</div>
+          <div class="footer">
+            <span><span class="tag tag-purple">Taxonomy</span><span class="tag tag-orange">L0-L5</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    <!-- Category 7: RL / Correction / Interactive -->
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="icon">🔄</span>
+        <h2>RL / 自纠错 / 交互式 NL2SQL</h2>
+        <span class="count">3 篇</span>
+      </div>
+      <div class="paper-grid">
+
+        <a class="paper-card" href="papers/2601.17699_SQL-Trail_Multi-Turn_RL.html">
+          <div class="arxiv-id">arXiv:2601.17699 · 2026</div>
+          <h3>SQL-Trail: Multi-Turn Reinforcement Learning for SQL Agent</h3>
+          <div class="summary">把 SQL 生成视为多步决策，RL + 与执行环境交错的检索学习自纠错策略。开放小数据 RL 训练框架，刷新 BIRD-Critic 等子任务。</div>
+          <div class="footer">
+            <span><span class="tag tag-orange">RL</span><span class="tag tag-pink">Self-Correct</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2509.00581_SQL-of-Thought_Multi-agentic_Error_Correction.html">
+          <div class="arxiv-id">arXiv:2509.00581 · 2025</div>
+          <h3>Multi-agentic Text-to-SQL Error Correction</h3>
+          <div class="summary">将 SQL 错误修复拆解为 Detector / Localizer / Fixer 多 Agent 流水线，结合执行反馈与 schema 上下文，显著提升复杂查询纠错率。</div>
+          <div class="footer">
+            <span><span class="tag tag-green">Multi-Agent</span><span class="tag tag-purple">Error Fix</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+
+        <a class="paper-card" href="papers/2508.15276_AmbiSQL_Interactive_Ambiguity.html">
+          <div class="arxiv-id">arXiv:2508.15276 · 2025</div>
+          <h3>Interactive Ambiguity Detection for Text-to-SQL</h3>
+          <div class="summary">建模 NL 问题的歧义来源（指代/范围/聚合/时间）并主动追问；与 BIRD-Interact 思路相呼应，将"澄清能力"纳入 NL2SQL 评估。</div>
+          <div class="footer">
+            <span><span class="tag tag-blue">Interactive</span><span class="tag tag-orange">Ambiguity</span></span>
+            <span class="read">查看总结 →</span>
+          </div>
+        </a>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- Reading Map -->
+  <section class="block alt">
+    <div style="background:#fff; border-radius:16px; padding:1.5rem; box-shadow:0 4px 18px rgba(0,0,0,.04);">
+      <h2 style="margin-top:0;">🗺️ 推荐阅读路线</h2>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <h3 style="margin-top:0;">🎓 学术研究路线</h3>
+          <ol style="padding-left:1.1rem; color:var(--text-soft); font-size:.92rem;">
+            <li>DAIL-SQL（理解 prompt 基线）</li>
+            <li>DIN-SQL（任务分解范式）</li>
+            <li>MAC-SQL（多 Agent）</li>
+            <li>CHESS / CHASE-SQL（SOTA 设计）</li>
+            <li>Spider 2.0（认识真实差距）</li>
+            <li>SQL-Trail（RL 新趋势）</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">🏭 工业落地路线</h3>
+          <ol style="padding-left:1.1rem; color:var(--text-soft); font-size:.92rem;">
+            <li>DB-GPT（开源参考架构）</li>
+            <li>XiYan-SQL（阿里实战集成）</li>
+            <li>Agentar-Scale-SQL（蚂蚁实战）</li>
+            <li>Data Interpreter（DS Agent）</li>
+            <li>Spider 2.0（评估自家系统）</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">📖 全局理解路线</h3>
+          <ol style="padding-left:1.1rem; color:var(--text-soft); font-size:.92rem;">
+            <li>Data Agents Levels (L0-L5)</li>
+            <li>Tabular Data Survey</li>
+            <li>LLM DS Agent Survey</li>
+            <li>具体方法论文按需深读</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Method Comparison Table -->
+  <section class="block">
+    <h2>📐 NL2SQL 方法横向对比（BIRD 准确率）</h2>
+    <div style="overflow-x:auto;">
+      <table class="cmp">
+        <thead>
+          <tr><th>方法</th><th>年份</th><th>核心机制</th><th>多 Agent</th><th>需训练</th><th>BIRD EX</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DAIL-SQL</td><td>2023.08</td><td>Prompt engineering</td><td>否</td><td>否</td><td>~54%</td></tr>
+          <tr><td>DIN-SQL</td><td>2023.04</td><td>任务分解 + 自纠错</td><td>否（pipeline）</td><td>否</td><td>55.9%</td></tr>
+          <tr><td>MAC-SQL</td><td>2023.12</td><td>多 Agent 协作</td><td>✓</td><td>否</td><td>59.59%</td></tr>
+          <tr><td>CHESS</td><td>2024.05</td><td>检索 + 多轮过滤 + 单元测试</td><td>✓</td><td>否</td><td>~68%</td></tr>
+          <tr><td>CHASE-SQL</td><td>2024.10</td><td>多策略候选 + 偏好选择</td><td>✓</td><td>选择器需训练</td><td>73.0%</td></tr>
+          <tr><td>XiYan-SQL</td><td>2025.07</td><td>M-Schema + ICL/SFT 多生成器集成</td><td>✓</td><td>✓</td><td>~75%</td></tr>
+          <tr><td>Distyl Distillery</td><td>2025</td><td>工程化语义层 + Agent</td><td>✓</td><td>✓</td><td>~81%</td></tr>
+          <tr><td><strong>Agentar-Scale-SQL</strong></td><td>2025</td><td>Test-time scaling + 合成数据</td><td>✓</td><td>✓</td><td><strong>~82%</strong></td></tr>
+          <tr><td>Human Expert (oracle)</td><td>—</td><td>—</td><td>—</td><td>—</td><td>92.96%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · 2026 · Generated with paper-summarizer skill</p>
+  <p>原始 PDF：<a href="../papers/">../papers/</a> · 调研报告：<a href="../report.md">../report.md</a></p>
+</footer>
+
+<script src="assets/components.js"></script>
+</body>
+</html>

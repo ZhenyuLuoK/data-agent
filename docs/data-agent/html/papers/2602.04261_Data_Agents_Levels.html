@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Agents: Levels, State of the Art, and Open Problems · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">动机</a>
+      <a href="#levels">L0-L5</a>
+      <a href="#sota">现状</a>
+      <a href="#leaps">关键跃迁</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2602.04261" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2602.04261 · 2026.02 · SIGMOD 2026 Tutorial</div>
+    <h1>Data Agents: Levels, State of the Art, and Open Problems</h1>
+    <div class="meta">
+      <span>👥 Yuyu Luo, Guoliang Li, Ju Fan, Nan Tang</span>
+      <span>🏛️ HKUST(GZ) / 清华 / 人大</span>
+      <span>📅 2026.02 · SIGMOD 2026 Tutorial</span>
+    </div>
+    <p class="tagline">
+      首次提出 Data Agent 的<strong>L0-L5 能力分级 taxonomy</strong>，类比自动驾驶 SAE 分级：
+      L0（无自主）→ L1（辅助查询）→ L2（任务级 agent）→ L3（端到端编排，监督下）→ L4（高自主，主动）→ L5（完全自主，生成式）。
+      用统一框架梳理 data management / preparation / analysis 各方向的代表系统，
+      并给出 L4-L5 的开放研究问题清单。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">L0-L5</div><div class="label">能力分级</div></div>
+      <div class="stat"><div class="value">SIGMOD 26</div><div class="label">官方 Tutorial</div></div>
+      <div class="stat"><div class="value">Proto-L3</div><div class="label">当前前沿</div></div>
+      <div class="stat"><div class="value">L4-L5</div><div class="label">未来愿景</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 动机：术语乱象</h2>
+
+    <div class="panel-gap">
+      <h3>❌ "Data Agent" 一词被滥用</h3>
+      <p>当前论文 / 产品中"data agent"用法极不一致 —— 简单的查询助手和"完全自主数据科学家"被混为一谈：</p>
+      <div class="grid grid-2">
+        <div>
+          <h4>用法 A：查询助手</h4>
+          <p>把 NL → SQL 的 wrapper 称为 data agent，本质上是单步翻译。</p>
+        </div>
+        <div>
+          <h4>用法 B：自主数据科学家</h4>
+          <p>展望中的端到端、能自我探索数据并发现洞察的智能体，目前并不存在。</p>
+        </div>
+        <div>
+          <h4>问题</h4>
+          <p>能力边界模糊 → 用户无法判断系统真实能力；监管者无法定责。</p>
+        </div>
+        <div>
+          <h4>需求</h4>
+          <p>需要一套像自动驾驶 L0-L5 那样的<strong>能力分级体系</strong>。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心贡献</h3>
+      <p>论文（SIGMOD 2026 Tutorial）提出 Data Agent 的<strong>L0-L5 分级 taxonomy</strong>，并以此组织：① 现有 L0-L2 系统综述；② Proto-L3（端到端工作流自动编排）的前沿系统；③ L4-L5 的开放研究问题。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="levels">
+    <div class="container" style="padding:0;">
+      <h2>2. L0-L5 能力分级</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>L0：无自主</h3>
+          <p>用户写 SQL / 写 pandas，系统只是数据库 / 库本身。Agent 不存在。</p>
+        </div>
+        <div class="card">
+          <h3>L1：辅助查询</h3>
+          <p>NL → 查询的单步翻译（典型 NL2SQL wrapper）。用户提问，Agent 翻译，结果由用户判断。</p>
+          <p>示例：早期 Vanna / 简单 ChatBI。</p>
+        </div>
+        <div class="card">
+          <h3>L2：任务级 Agent</h3>
+          <p>能完成一个有明确目标的任务（如"做一份 EDA 报告"），需要 plan + 多工具调用，但仍在用户监督下。</p>
+          <p>示例：Code Interpreter、TaskWeaver、Data Interpreter（典型 L2 / Proto-L3）。</p>
+        </div>
+        <div class="card">
+          <h3>L3：端到端编排（监督下）</h3>
+          <p>能自主编排端到端数据工作流：从理解需求 → 数据获取 → 处理 → 分析 → 报告。仍由人类监督关键决策点。</p>
+          <p>当前前沿是<strong>Proto-L3</strong>：部分系统在受控场景接近 L3。</p>
+        </div>
+        <div class="card">
+          <h3>L4：高自主、主动</h3>
+          <p>不仅能完成给定任务，还能<strong>主动</strong>提出新分析、发现潜在异常、规划长期数据治理。</p>
+          <p>愿景，目前尚未实现。</p>
+        </div>
+        <div class="card">
+          <h3>L5：完全自主、生成式</h3>
+          <p>有自主目标、自主迭代、自主生成新数据/新方法的能力。</p>
+          <p>类似自动驾驶 L5：理论上不需要人类介入。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="sota">
+    <h2>3. 各方向 State-of-the-Art（按 Level 归类）</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">论文按 data management / preparation / analysis 三类组织。下表为概念性归类参考。</p>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Data Management 方向</h3>
+        <ul>
+          <li>L1：NL2SQL wrappers (Vanna)</li>
+          <li>L2：DB-GPT、XiYan-SQL pipeline、Agentar-Scale-SQL</li>
+          <li>Proto-L3：能在多 DB 间自主跳转、执行工作流的 agent（雏形）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Data Preparation 方向</h3>
+        <ul>
+          <li>L1：单功能数据清洗工具 (DataPrep / openrefine)</li>
+          <li>L2：Auto-cleaning agent</li>
+          <li>Proto-L3：端到端 schema mapping + cleaning + validation</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Data Analysis 方向</h3>
+        <ul>
+          <li>L1：单步问答 BI</li>
+          <li>L2：Code Interpreter / Data Interpreter / AgentAda</li>
+          <li>Proto-L3：能主动选方法、组合 skill、生成 insight 报告的 agent</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>关键观察</h3>
+        <ul>
+          <li>大多数已发表系统在 <strong>L2</strong> 量级</li>
+          <li>少数研究/产品在 <strong>Proto-L3</strong> 范围（如 Data Interpreter / 部分 ChatBI）</li>
+          <li>L4-L5 仍是<strong>愿景</strong>，需要长链推理、自主目标、记忆压缩等突破</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="leaps">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键跃迁（L_n → L_{n+1}）</h2>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <h3>L1 → L2</h3>
+          <p>关键：从"单步翻译"到"<strong>多步 plan + 工具使用</strong>"</p>
+          <ul>
+            <li>需要：plan 能力、tool 调用、错误反馈循环</li>
+            <li>典型工作：Data Interpreter / AgentAda</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>L2 → L3</h3>
+          <p>关键：端到端工作流的<strong>自主编排</strong>，跨阶段一致性</p>
+          <ul>
+            <li>需要：长流水线记忆、错误传递控制、可验证性</li>
+            <li>挑战：跨表、跨数据库、跨工具的状态管理</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>L3 → L4</h3>
+          <p>关键：从"被动响应"到"<strong>主动发起</strong>"</p>
+          <ul>
+            <li>需要：自主目标设定、长期记忆、价值对齐</li>
+            <li>挑战：何时介入用户、不打扰、不越权</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="insights">
+    <h2>5. 启发与开放问题</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>💡 对从业者的启发</h3>
+        <ul>
+          <li>给自家 Data Agent 产品对齐 Level，避免"营销话术 &gt;&gt; 实际能力"</li>
+          <li>用 Level 来匹配用户期待与系统能力</li>
+          <li>把"L2 → Proto-L3"作为近期演进目标，比追求 L5 现实</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🔬 学术开放问题</h3>
+        <ul>
+          <li>L3 端到端编排的可验证性如何保证？</li>
+          <li>L4 的"主动性"如何形式化定义？</li>
+          <li>L5 生成式 agent 的安全 / 责任边界？</li>
+          <li>如何设计跨级别评测？（不能用 Spider 评 L4）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🌍 行业意义</h3>
+        <ul>
+          <li>类比自动驾驶 SAE 分级，给 Data Agent 行业一个共同语言</li>
+          <li>对监管 / 法律 / 责任划分有重要参考</li>
+          <li>对学界规划研究 roadmap 有指导价值</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>⚠️ 局限</h3>
+        <ul>
+          <li>Tutorial 性质，不是定量 benchmark</li>
+          <li>各 level 之间的边界仍带主观判断</li>
+          <li>L4-L5 描述偏愿景，缺乏可验证标准</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>6. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2602.04261" target="_blank">arXiv:2602.04261</a></li>
+      <li>🎓 形式：SIGMOD 2026 Tutorial（<a href="https://luoyuyu.vip/files/SIGMOD26-Tutorial-DataAgents.pdf" target="_blank">tutorial PDF</a>）</li>
+      <li>📑 关联综述：LLM-based Data Science Agent Survey (2508.02744) · Tabular Survey (2508.00217)</li>
+      <li>📑 第三方对照综述：A Survey of Data Agents（arXiv 2510.23587）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · Data Agents Levels · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

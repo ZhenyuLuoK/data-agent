@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tabular Data Understanding with LLMs: A Survey · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">动机</a>
+      <a href="#taxonomy">分类</a>
+      <a href="#tasks">任务</a>
+      <a href="#gaps">关键 gap</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2508.00217" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2508.00217 · 2025.07 · Survey</div>
+    <h1>Tabular Data Understanding with LLMs: A Survey of Recent Advances and Challenges</h1>
+    <div class="meta">
+      <span>👥 Xiaofeng Wu, Alan Ritter, Wei Xu</span>
+      <span>🏛️ Georgia Tech</span>
+      <span>📅 2025.07</span>
+    </div>
+    <p class="tagline">
+      系统化 LLM/MLLM 处理表格数据的方法与任务。提出
+      <strong>表格输入表征 taxonomy</strong> + <strong>表格理解任务体系</strong>，
+      并指出三大关键 gap：① 现有任务过度集中于"检索式"而非真正推理；
+      ② 复杂表结构 / 大规模表 / 长 context / 多表场景仍是难点；
+      ③ 模型在不同表格表征/格式间泛化能力有限。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">Taxonomy</div><div class="label">表征 + 任务</div></div>
+      <div class="stat"><div class="value">3 Gaps</div><div class="label">关键挑战</div></div>
+      <div class="stat"><div class="value">LLM+MLLM</div><div class="label">同时覆盖</div></div>
+      <div class="stat"><div class="value">cs.CL/DB/LG</div><div class="label">跨子域</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 综述动机</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 表格理解的特殊性</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 二维结构 vs 线性文本</h4>
+          <p>表格是二维数据：行表示 record、列表示 attribute、cell 之间存在隐式语义关联。LLM 默认按 token 序列读，容易丢失结构信息。</p>
+        </div>
+        <div>
+          <h4>② 格式高度多样</h4>
+          <p>从规整的关系型数据库表，到带合并单元格的多层级 spreadsheet，再到带说明性文字的 wiki tables。每种格式有不同最佳实践。</p>
+        </div>
+        <div>
+          <h4>③ 任务高度专门化</h4>
+          <p>TableQA、Table Fact Verification、Table-to-Text、Schema Linking、NL2SQL 等任务各有 SOTA 方法，缺乏统一视角。</p>
+        </div>
+        <div>
+          <h4>④ 评测分散</h4>
+          <p>不同 benchmark 使用不同表征 / 不同输入格式，使方法间难以横向比较。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 综述贡献</h3>
+      <p>论文系统性地：① 提出"<strong>表格输入表征</strong>"的 taxonomy，统一不同序列化方式（Markdown / JSON / HTML / Tuples / 图像 / SQL）；② 把 table understanding 任务按目标聚类整理；③ 指出三大未解决的关键 gap，作为社区研究方向。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="taxonomy">
+    <div class="container" style="padding:0;">
+      <h2>2. 表格表征 Taxonomy</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>文本序列化表征</h3>
+          <ul>
+            <li><strong>Markdown / Pipe</strong>：人类可读，但长表 token 开销大</li>
+            <li><strong>JSON</strong>：结构清晰，列名重复带来 token 浪费</li>
+            <li><strong>CSV/TSV</strong>：紧凑但语义弱</li>
+            <li><strong>HTML</strong>：保留合并单元格 / 样式语义</li>
+            <li><strong>SQL CREATE TABLE + INSERT</strong>：DB 视角</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>结构化 / 增强表征</h3>
+          <ul>
+            <li><strong>Tuples / Triples</strong>：(row, col, value) 三元组</li>
+            <li><strong>带列描述的 schema</strong>（如 XiYan-SQL 的 M-Schema）</li>
+            <li><strong>带典型值/统计</strong>（min/max/distinct 数）</li>
+            <li><strong>图像表征</strong>（MLLM 直接看 spreadsheet 截图）</li>
+            <li><strong>嵌入表征</strong>（TabBERT/TaPas 等结构感知预训练）</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>表征选择的影响</h3>
+          <p>论文指出表征选择对下游 task 性能影响巨大：</p>
+          <ul>
+            <li>同一个模型 + 同一个 task，换一种表征性能差距可达 10pt+；</li>
+            <li>没有"通用最优"表征 —— 取决于任务是检索 vs 推理 vs 生成；</li>
+            <li>对长表/大表，需要先做"表格压缩"（采样 / schema 化）再喂模型。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>多表 / 大表挑战</h3>
+          <p>当面对多表 JOIN、TB 级数据、动态变化 schema 时，单一表征不够：</p>
+          <ul>
+            <li>需要多轮交互 / 检索式调用工具；</li>
+            <li>schema linking（如 RSL-SQL / X-SQL）成为关键预处理；</li>
+            <li>是 NL2SQL / Data Agent 共同面临的问题。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="tasks">
+    <h2>3. 表格理解任务体系</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Retrieval / Lookup 类</h3>
+        <ul>
+          <li><strong>TableQA</strong>：单元格定位 + 简单聚合</li>
+          <li><strong>Cell Lookup</strong>：找到给定 row/col 的值</li>
+          <li><strong>Schema Linking</strong>：把 NL 实体对应到 column/table</li>
+          <li>多数现有 benchmark 偏向此类</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Reasoning 类</h3>
+        <ul>
+          <li><strong>Numerical Reasoning</strong>：跨 row 聚合、比例计算</li>
+          <li><strong>Multi-hop QA</strong>：跨表 JOIN + 多步推理</li>
+          <li><strong>Fact Verification</strong>：判断声明在表中是否成立</li>
+          <li><strong>Trend Analysis</strong>：时间序列分析</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Generation 类</h3>
+        <ul>
+          <li><strong>Table-to-Text</strong>：把表格摘要为自然语言</li>
+          <li><strong>NL2SQL</strong>：自然语言转 SQL</li>
+          <li><strong>Code Generation over Tables</strong>：pandas/sklearn 代码</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Modification 类</h3>
+        <ul>
+          <li><strong>Data Cleaning</strong>：缺失值修复、异常修正</li>
+          <li><strong>Schema Mapping</strong>：表 schema 对齐</li>
+          <li><strong>Imputation / Augmentation</strong></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="gaps">
+    <div class="container" style="padding:0;">
+      <h2>4. 论文指出的三大关键 Gap</h2>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <h3>Gap 1: 检索 &gt; 推理</h3>
+          <p>现有 benchmark 多数本质是 lookup：在表里找数。真正考验<strong>推理</strong>（多步、逻辑、数值）的题占比少。</p>
+          <p>方向：建造更强调 reasoning 的评测；NL2SQL 中的 BIRD 是一个例子。</p>
+        </div>
+        <div class="card">
+          <h3>Gap 2: 复杂结构难处理</h3>
+          <p>合并单元格、嵌套表头、多 sheet、超长上下文、多表 JOIN 等场景，目前模型表现仍弱。</p>
+          <p>方向：图像/MLLM 表征 + 显式 schema linking + 工具型 agent。</p>
+        </div>
+        <div class="card">
+          <h3>Gap 3: 跨表征泛化弱</h3>
+          <p>同一模型在 Markdown 训练，换 HTML 测试就掉点。说明现有方法没真正学到"表的本质"。</p>
+          <p>方向：结构感知预训练 / 多表征联合训练 / 表征不变学习。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="insights">
+    <h2>5. 启发与未来方向</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>💡 对 Data Agent 的指导</h3>
+        <ul>
+          <li>schema 表征是 NL2SQL/Data Agent 的"输入设计"环节，不可忽视</li>
+          <li>大表必须先做 schema linking，不能全表喂入</li>
+          <li>多表场景需要 agent 化的多轮工具调用</li>
+          <li>评测要分清 retrieval vs reasoning</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🚀 未来方向</h3>
+        <ul>
+          <li>结构感知预训练（保留表二维结构）</li>
+          <li>面向真实复杂表（spreadsheet、wiki table）的 benchmark</li>
+          <li>MLLM 直接读图像表 vs 文本表的能力对比</li>
+          <li>跨表征 generalization 的系统性研究</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>6. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2508.00217" target="_blank">arXiv:2508.00217</a></li>
+      <li>📑 关联 benchmark：BIRD · Spider 2.0 · TQA-Bench · WikiTableQuestions · TabFact</li>
+      <li>📑 关联方法：M-Schema (XiYan-SQL) · TaPas · TableLlama</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · Tabular Data Understanding Survey · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

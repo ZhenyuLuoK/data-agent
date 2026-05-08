@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AmbiSQL: Interactive Ambiguity Detection and Resolution for Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2508.15276" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2508.15276 · 2025.08 (v1) → 2026.03 (v2) · SIGMOD 2026 Demo</div>
+    <h1>AmbiSQL: Interactive Ambiguity Detection and Resolution for Text-to-SQL</h1>
+    <div class="meta">
+      <span>👥 Zhongjun Ding, Yin Lin, Tianjing Zeng, Rong Zhu, Bolin Ding, Jingren Zhou</span>
+      <span>🏛️ 阿里巴巴（XiYan-SQL 团队）</span>
+      <span>📅 2025.08 · SIGMOD 2026 Demo</span>
+    </div>
+    <p class="tagline">
+      把"<strong>用户问题歧义</strong>"作为 NL2SQL 的一等公民问题。
+      AmbiSQL 是首个把<strong>歧义检测 + 交互式消歧</strong>系统化的 demo：
+      自动发现自然语言查询中的潜在歧义，
+      用直观的<strong>多选题</strong>引导用户澄清意图，再 rewrite 为无歧义查询喂给 NL2SQL backend。
+      提出<strong>细粒度歧义 taxonomy</strong>（区分来自 DB 元素与来自 LLM 推理的歧义）。
+      论文报告：在歧义查询数据集上达到 <strong>87.2%</strong> 歧义检测 precision，并显著提升 SQL exact match。
+      与<strong>商业版 XiYan-SQL</strong> 集成，SIGMOD 2026 现场参会者可使用 40 个真实歧义查询体验消歧效果。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">87.2%</div><div class="label">歧义检测 Precision</div></div>
+      <div class="stat"><div class="value">↑</div><div class="label">SQL Exact Match 提升</div></div>
+      <div class="stat"><div class="value">XiYan-SQL</div><div class="label">商业级 backend</div></div>
+      <div class="stat"><div class="value">SIGMOD'26</div><div class="label">Demo · 40 真实歧义题</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 用户问题本身就有歧义</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① "近期"是多近？</h4>
+          <p>"列出近期销售额最高的客户"——"近期"是一周、一月还是一季度？不同选择对应完全不同的 SQL。</p>
+        </div>
+        <div>
+          <h4>② "顾客"指哪张表？</h4>
+          <p>DB 中可能同时有 <code>customer</code>、<code>buyer</code>、<code>account_holder</code> 三张相关表。NL 中"顾客"具体指哪个？</p>
+        </div>
+        <div>
+          <h4>③ "销售额"如何聚合？</h4>
+          <p>是按订单金额求和、按净收入计算（含退款）还是按毛收入？不同业务定义指向不同列与公式。</p>
+        </div>
+        <div>
+          <h4>④ LLM 自我消歧不可靠</h4>
+          <p>LLM 默认会"猜一个最常见的解释"，但这个猜测对当前用户而言可能是错的；且 LLM 不主动告知自己做了什么假设，用户不知道结果是怎么来的。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：把"消歧"显式做成<strong>交互式步骤</strong></h3>
+      <p>
+        AmbiSQL 把 NL2SQL 重新组织为：
+        <strong>歧义检测 → 多选题问用户 → 收集反馈 → 重写问题 → 调 NL2SQL backend</strong>。
+        关键创新有两点：
+        ① <strong>细粒度歧义 taxonomy</strong>，区分歧义的来源 ——
+        既包括<strong>来自 DB 元素</strong>的歧义（多张相关表 / 多个语义近似列 / 字面值不一致），
+        也包括<strong>来自 LLM 推理</strong>的歧义（隐式假设、聚合粒度选择、时间范围解释）；
+        ② <strong>多选题驱动的 UI</strong>，让消歧门槛足够低 —— 用户只需点选项，不必再写 NL。
+        与商业版 XiYan-SQL 集成证明该路径在工业级系统中是可行且必要的。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">用户 NL 提问</span>
+      <span class="arrow">→</span>
+      <span class="step">🔍 歧义检测</span>
+      <span class="arrow">→</span>
+      <span class="step">📋 多选题澄清</span>
+      <span class="arrow">→</span>
+      <span class="step">✍️ Rewrite 无歧义查询</span>
+      <span class="arrow">→</span>
+      <span class="step">🤖 XiYan-SQL Backend</span>
+      <span class="arrow">→</span>
+      <span class="step">✅ SQL + 结果</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：歧义检测与交互式消歧</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Fine-grained Ambiguity Taxonomy</h3>
+          <p>论文把 NL2SQL 中的歧义按来源细分为两大类：</p>
+          <ul>
+            <li><strong>DB-element ambiguity</strong>：歧义源自数据库本身
+              <ul>
+                <li>表选择歧义（多张相关表）</li>
+                <li>列选择歧义（语义近似列）</li>
+                <li>字面值匹配歧义（大小写、缩写、拼写）</li>
+                <li>JOIN 路径歧义（多条可达路径）</li>
+              </ul>
+            </li>
+            <li><strong>LLM-reasoning ambiguity</strong>：歧义源自 LLM 推理过程的隐式选择
+              <ul>
+                <li>聚合粒度（按天/周/月）</li>
+                <li>时间范围解释（"近期"="?"）</li>
+                <li>排序依据（按某 metric 还是按时间）</li>
+                <li>过滤条件强弱（包含 NULL 否）</li>
+              </ul>
+            </li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>② 自动歧义检测</h3>
+          <p>对一个 NL 问题，AmbiSQL 检测是否存在以上 taxonomy 中的某类歧义：</p>
+          <ul>
+            <li>结合 schema metadata（哪些表 / 列名相近）；</li>
+            <li>结合 LLM 对问题潜在解释的多样化采样；</li>
+            <li>当多种合理解释存在时，标记为歧义。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>③ 多选题生成</h3>
+          <p>对每个检测到的歧义点，AmbiSQL 生成<strong>多选题</strong>：</p>
+          <ul>
+            <li>问题文字直白描述歧义点（"您说的'顾客'是指..."）；</li>
+            <li>选项是 taxonomy 引导下的有限可选解释；</li>
+            <li>UI 上以多选 / 单选呈现，用户只需点击。</li>
+          </ul>
+          <p>关键：选项必须可枚举且互斥，避免 open-ended 让用户负担过大。</p>
+        </div>
+
+        <div class="card">
+          <h3>④ Question Rewriting</h3>
+          <p>收集用户回答后，AmbiSQL 把澄清信息<strong>融合回原问题</strong>：</p>
+          <ul>
+            <li>例：原问题 "近期销售额最高的顾客" + 用户选择"近期 = 最近 30 天" + "顾客 = customer 表"；</li>
+            <li>生成 rewrite 后的查询："最近 30 天 customer 表中销售额最高的顾客"；</li>
+            <li>送入 XiYan-SQL backend 生成 SQL。</li>
+          </ul>
+          <p>这一步保证下游 NL2SQL 拿到的是<strong>消歧后的清晰问题</strong>，避免它再做隐式假设。</p>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h3>⑤ 与商业 XiYan-SQL 集成</h3>
+          <p>论文 v2 明确说明 AmbiSQL 已集成到阿里 XiYan-SQL（同团队的商业 NL2SQL 系统，2507.04701）作为前端消歧层。整体流程：</p>
+          <ol>
+            <li>用户在前端提问 → AmbiSQL 检测歧义；</li>
+            <li>若有歧义，弹出多选题；用户点选；</li>
+            <li>AmbiSQL rewrite 后的问题进入 XiYan-SQL：M-Schema + 多生成器 + Selection Model；</li>
+            <li>返回 SQL + 执行结果 + （可选）歧义解决路径解释。</li>
+          </ol>
+          <p>这是<strong>学术研究 → 工业产品</strong>闭环的代表性范式：把 demo 直接接到生产 NL2SQL pipeline 之上。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把 NL2SQL 失败的一大类原因（"用户没说清"）从"算法问题"转化为"<strong>UX 问题</strong>" —— 与其让算法<em>猜</em>，不如让用户<em>选</em>。这条路线对工业产品落地极其务实。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估方式</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Demo 评估资源</h3>
+        <ul>
+          <li><strong>40 个真实歧义查询</strong>：从两个真实 benchmark 收集，作为 SIGMOD 2026 现场体验集</li>
+          <li>参会者可在 demo 上查看消歧前后 SQL 质量对比</li>
+          <li>支持参会者用自己的 DB 与 NL 测试系统</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评估维度</h3>
+        <ul>
+          <li>歧义检测召回（漏检 / 误检）</li>
+          <li>消歧后 SQL 正确率（vs 直接生成）</li>
+          <li>用户交互轮数（消歧成本）</li>
+          <li>与 XiYan-SQL 集成的端到端体验</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键贡献与影响</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">歧义检测 Precision</div>
+          <div class="value">87.2%</div>
+          <div class="bar"><div style="width:87.2%;"></div></div>
+          <div class="delta up">论文实验结果</div>
+        </div>
+        <div class="metric">
+          <div class="label">SQL Exact Match</div>
+          <div class="value">↑ 改善</div>
+          <div class="bar"><div style="width:80%;"></div></div>
+          <div class="delta up">消歧后显著提升</div>
+        </div>
+        <div class="metric">
+          <div class="label">SIGMOD'26 Demo 体验集</div>
+          <div class="value">40 题</div>
+          <div class="bar"><div style="width:80%;"></div></div>
+          <div class="delta up">来自 2 个真实 benchmark</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：AmbiSQL 论文（<a href="https://arxiv.org/abs/2508.15276" target="_blank">arXiv:2508.15276 v2</a>）。原文实验结论："AmbiSQL achieves 87.2% precision in ambiguity detection and improves SQL exact match"；以及 abstract："integrated with XiYan-SQL, our commercial Text-to-SQL backend"、"40 ambiguous queries collected from two real-world benchmarks"。</p>
+
+      <h3>关键贡献清单</h3>
+      <ol>
+        <li><strong>系统化歧义 taxonomy</strong>：首次区分 DB-element 与 LLM-reasoning 两大类来源</li>
+        <li><strong>交互式消歧 UX</strong>：用多选题降低用户消歧成本</li>
+        <li><strong>Question Rewriting</strong>：把用户反馈固化为清晰问题再喂下游</li>
+        <li><strong>商业系统集成</strong>：与 XiYan-SQL 集成验证工业可行性</li>
+        <li><strong>SIGMOD 2026 demo</strong>：现场可交互体验，对社区扩散影响大</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. AmbiSQL 覆盖的歧义模式</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于论文 taxonomy 设计动机。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">DB 元素：表/列选择</button>
+      <button class="tab-btn" data-tab="c2">DB 元素：字面值匹配</button>
+      <button class="tab-btn" data-tab="c3">LLM 推理：粒度/时间</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>多张相关表 / 多列同义</h4>
+      <p>当 DB 中有 <code>customer</code>、<code>buyer</code>、<code>account_holder</code> 三张相关表时，"客户"指哪张？或同一表下 <code>revenue</code>、<code>net_revenue</code>、<code>gross_revenue</code> 三个列时，"销售额"指哪个？</p>
+      <p>AmbiSQL 处理：</p>
+      <ul>
+        <li>检测：schema 上语义相近的表/列</li>
+        <li>多选题：列出候选表/列 + 简要说明（如"net_revenue：扣除退款后的净收入"）</li>
+        <li>用户点选 → rewrite 时把具体名称固化进问题</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>字面值不一致</h4>
+      <p>用户问"销售额最高的省份"，但 DB 里 <code>province</code> 列存的是英文缩写。AmbiSQL 可结合 LSH 风格匹配（CHESS 思想）发现潜在不一致。</p>
+      <p>多选题示例：</p>
+      <ul>
+        <li>选项 A：DB 中包含 "Beijing", "Shanghai" 等英文全称</li>
+        <li>选项 B：DB 中包含 "BJ", "SH" 等缩写</li>
+      </ul>
+      <p>用户选择后，AmbiSQL 在 rewrite 时插入正确字面值形式。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>聚合粒度 / 时间范围</h4>
+      <p>"列出近期销售额最高的客户"中：</p>
+      <ul>
+        <li>"近期"歧义 → 多选题：最近 7 天 / 30 天 / 90 天 / 本季度 / 本年度；</li>
+        <li>"销售额"是订单数 vs 订单金额 vs 净收入 → 多选题枚举；</li>
+        <li>"最高"是 TOP 1 还是 TOP K → 多选题。</li>
+      </ul>
+      <p>这种隐式假设在传统 NL2SQL 里完全由 LLM 自行决定，AmbiSQL 把它<strong>暴露给用户</strong>。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>用户问题本身可能是错的根因</strong>，不能全推给 NL2SQL 算法</li>
+            <li>消歧应该是 NL2SQL 系统的<strong>第一类公民</strong>，不是 afterthought</li>
+            <li>UX 比算法更能解决"问题模糊"问题：让用户<em>选</em>而不是 LLM <em>猜</em></li>
+            <li>把研究 demo 接到工业 backend 是验证路径价值的最佳方式</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>NL2SQL 歧义 taxonomy（DB + LLM 双源）</li>
+            <li>多选题驱动消歧 UX 范式</li>
+            <li>Question Rewriting 模块设计</li>
+            <li>与商业 XiYan-SQL 系统集成</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>对企业 ChatBI 类产品有直接借鉴：把"猜"换成"问"</li>
+            <li>启发后续工作（如 Visual Pragmatic Repair, BIRD-INTERACT 评测）</li>
+            <li>把 NL2SQL 评测从"单步对错"扩展为"含交互的端到端"</li>
+            <li>降低非技术用户使用 NL2SQL 的不确定感</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>歧义检测 recall 不是 100%，仍会漏掉部分隐式假设</li>
+            <li>多选题选项的可穷举性是设计挑战（开放型歧义如"潜力客户"难枚举）</li>
+            <li>需要与 schema metadata 紧耦合，跨 DB 移植成本不低</li>
+            <li>用户体验上要平衡"问太多 → 烦" vs "不问 → 错答"</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2508.15276" target="_blank">arXiv:2508.15276</a></li>
+      <li>🎓 接收：SIGMOD 2026 Demonstration</li>
+      <li>📑 相关 backend：<a href="2507.04701_XiYan-SQL_Multi-Generator_Text-to-SQL.html">XiYan-SQL（同团队，本论文集已收录）</a></li>
+      <li>📑 后续工作：BIRD-INTERACT 等含交互的 NL2SQL 评测</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · AmbiSQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

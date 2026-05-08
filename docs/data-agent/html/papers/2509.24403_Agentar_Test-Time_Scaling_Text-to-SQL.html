@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentar-Scale-SQL: Test-Time Scaling for Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2509.24403_Agentar_Test-Time_Scaling_Text-to-SQL.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2509.24403 · 2025</div>
+    <h1>Agentar-Scale-SQL: Advancing Text-to-SQL through Orchestrated Test-Time Scaling</h1>
+    <div class="meta">
+      <span>👥 Ant Group Agentar Team</span>
+      <span>🏛️ 蚂蚁集团</span>
+      <span>📅 2025.09</span>
+    </div>
+    <p class="tagline">
+      蚂蚁集团出品、当前 BIRD 排行榜<strong>第一名</strong>的 NL2SQL 系统：
+      把 <em>Test-Time Scaling (TTS)</em> 思想系统化引入 NL2SQL，
+      用<strong>编排式 (Orchestrated) TTS</strong> 把多种推理时计算策略组合起来，
+      在 BIRD 测试集达到 <strong>81.67% EX / 77.00 R-VES</strong>，与人类专家基线 92.96% 仅相差 <strong>11.29pt</strong>。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">81.67%</div><div class="label">BIRD Test EX（榜首）</div></div>
+      <div class="stat"><div class="value">77.00</div><div class="label">BIRD Test R-VES</div></div>
+      <div class="stat"><div class="value">TTS</div><div class="label">编排式测试时扩展</div></div>
+      <div class="stat"><div class="value">11.29pt</div><div class="label">距人类专家 92.96%</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 单点 TTS 已触顶</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 单一 TTS 维度收益边际递减</h4>
+          <p>仅靠多采样、self-consistency、CoT 这一类单一维度的"加大算力"，BIRD test 在 73-75% 附近反复徘徊。</p>
+        </div>
+        <div>
+          <h4>② 多策略缺乏统一编排</h4>
+          <p>CHASE-SQL（多 CoT 策略）、CHESS（候选生成 + UT）、XiYan-SQL（ICL+SFT 集成）各自有效，但<strong>互不知晓</strong>，简单拼装会产生重复算力浪费。</p>
+        </div>
+        <div>
+          <h4>③ 自纠错与候选选择脱节</h4>
+          <p>常见做法把 Self-Correction 和 Candidate Selection 当两个独立步骤，没有统一的"算力分配 + 终止"策略。</p>
+        </div>
+        <div>
+          <h4>④ 工程系统级优化缺失</h4>
+          <p>真实生产中 token 预算、延迟、可重复性都是硬约束。学术单点方法很少把"在固定预算下选最优策略组合"形式化。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：Orchestrated Test-Time Scaling</h3>
+      <p>把不同 TTS 策略（多生成器、多 CoT 路径、迭代纠错、候选选择）<strong>看作 orchestrator 可调度的"算力单元"</strong>。在每个 query 上，根据问题难度、当前候选质量、剩余预算，动态决定下一步用哪种 TTS 策略。</p>
+      <p>这把"NL2SQL 性能 ↔ 测试时算力"的关系从"单一维度的 scaling law"升级为"<strong>多维 orchestration 的 scaling law</strong>"。</p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">🧠 Orchestrator（策略调度）</span>
+      <span class="arrow">⤵</span>
+      <span class="step">多 CoT 路径生成</span>
+      <span class="arrow">+</span>
+      <span class="step">多生成器集成</span>
+      <span class="arrow">+</span>
+      <span class="step">迭代纠错</span>
+      <span class="arrow">→</span>
+      <span class="step">🏆 候选选择 (Critic)</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：编排式 TTS</h2>
+
+      <p>论文把 TTS 的"算力维度"明确划分并组合：</p>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① 多路径推理（Multi-Path Reasoning）</h3>
+          <p>沿用 CHASE-SQL 的多 CoT 策略，同时采用 Divide-and-Conquer / Chain-of-Query / Schema-aware 等不同思维路径。</p>
+        </div>
+        <div class="card">
+          <h3>② 多生成器集成（Multi-Generator Ensemble）</h3>
+          <p>同时使用闭源大模型 + 自训练 SFT 模型 + 不同温度的采样，提升候选多样性。</p>
+        </div>
+        <div class="card">
+          <h3>③ 迭代纠错（Iterative Refinement）</h3>
+          <p>对每个候选 SQL 执行 → 收集错误/空结果 → 用专门的 Critic Agent 给反馈 → 改写。最多 K 轮。</p>
+        </div>
+        <div class="card">
+          <h3>④ 候选选择（Critic-based Selection）</h3>
+          <p>训练偏好优化的 Selector，综合 SQL 结构、执行结果、schema fit 等多维度打分。</p>
+        </div>
+        <div class="card">
+          <h3>⑤ 大规模合成数据训练</h3>
+          <p>团队用 LLM 自动合成大量 (问题, schema, SQL) 训练对，尤其涵盖 BIRD 风格的脏数据 + 外部知识场景，用于训练自家 SFT 生成器和 Critic 模型。</p>
+        </div>
+        <div class="card">
+          <h3>⑥ Orchestrator 调度</h3>
+          <p>Orchestrator 不是简单流水线，而是带预算/置信度感知：在简单题上节省算力，在难题上 burn more compute。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把"测试时计算"作为一种<strong>显式的可调度资源</strong>而非"采样数 N"这一种维度。这与 OpenAI o1 / Google Gemini Thinking 把 reasoning 当成可分配资源的思想一致。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>主战场</h3>
+        <ul>
+          <li>BIRD dev / test（提交到官方 leaderboard）</li>
+          <li>R-VES（Reward-VES，效率指标）</li>
+          <li>BIRD-Critic（SQL bug 修复）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线（论文 Table 1）</h3>
+        <ul>
+          <li>CHASE-SQL + Gemini（73.0% BIRD test EX）</li>
+          <li>XiYan-SQL（多生成器路线，BIRD test 75.63%）</li>
+          <li>Distyl Distillery（同期工业方案）</li>
+          <li>AskData + GPT-4o（AT&T CDO 工业系统）</li>
+          <li>逐方法具体 EX/R-VES 详见 Agentar 论文 Table 1</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">BIRD Test EX</div>
+          <div class="value">81.67<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:81.67%;"></div></div>
+          <div class="delta up">论文官方数字 · BIRD 排行榜 SOTA</div>
+        </div>
+        <div class="metric">
+          <div class="label">BIRD Test R-VES</div>
+          <div class="value">77.00</div>
+          <div class="bar"><div style="width:77%;"></div></div>
+          <div class="delta up">兼顾正确性 + 执行效率</div>
+        </div>
+        <div class="metric">
+          <div class="label">距 Human Expert</div>
+          <div class="value">11.29pt</div>
+          <div class="bar"><div style="width:88%;"></div></div>
+          <div class="delta up">人类基线 92.96%；缩窄至 11.29pt</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：Agentar-Scale-SQL 论文（<a href="https://arxiv.org/abs/2509.24403" target="_blank">arXiv:2509.24403</a>）+ 蚂蚁开源仓库（<a href="https://github.com/antgroup/Agentar-Scale-SQL" target="_blank">github.com/antgroup/Agentar-Scale-SQL</a>）+ <a href="https://bird-bench.github.io/" target="_blank">BIRD 官方 leaderboard</a>。</p>
+
+      <h3>消融分析（论文 Section 4.4 定性结论）</h3>
+      <p>论文系统消融了 Orchestrated TTS 的关键组件。报告的趋势：</p>
+      <ul>
+        <li><strong>w/o SQL selection scaling</strong>：用 self-consistency（majority voting based on execution results）替代偏好选择，EX 显著下降 → 证明 selector 是关键</li>
+        <li><strong>w/o multi-generator</strong>：单生成器候选多样性不足，selector 上限受限</li>
+        <li><strong>w/o iterative refinement</strong>：缺少基于错误反馈的迭代修正，复杂题失败率上升</li>
+        <li>完整 Orchestrated TTS 才达到 BIRD test <strong>81.67% EX</strong></li>
+      </ul>
+      <p style="font-size:.85rem; color:var(--text-soft);">具体逐组件 EX 数字详见 <a href="https://arxiv.org/html/2509.24403v3" target="_blank">Agentar-Scale-SQL 论文 v3 Section 4.4</a>。</p>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 案例研究</h2>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">Case 1: Orchestrator 算力分配</button>
+      <button class="tab-btn" data-tab="c2">Case 2: 合成数据训练</button>
+      <button class="tab-btn" data-tab="c3">Case 3: BIRD 排行榜对比</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>难度感知的算力分配（Orchestrator）</h4>
+      <p>论文 Orchestrator 模块的核心思想：把 test-time compute 视为可调度的资源，根据 query 的初始难度信号（如初版 SQL 的执行成功率、生成器之间的一致性）动态决定：</p>
+      <ul>
+        <li>启用几个 generator</li>
+        <li>每个 generator 采样几个 candidate</li>
+        <li>是否进入迭代 refinement / pairwise selection</li>
+      </ul>
+      <p>实现的语义：易题快速收敛，难题给足预算，把 token 投入精准匹配到收益最大的 query 上 —— 这是论文定义的 "Orchestrated Test-Time Scaling"。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>合成数据 + SFT 生成器（论文 Section 3.3）</h4>
+      <p>论文承认 BIRD 测试集对"含 external evidence、脏数据、列名缩写"的题占比远高于训练集分布。Agentar 团队的应对：</p>
+      <ul>
+        <li>用 LLM 自动合成带 evidence 字段、缩写列名、enum 取值约束的训练样本</li>
+        <li>在合成数据上 SFT 一组 SQL 生成器与 critic</li>
+        <li>训练后的模型在 BIRD test 上比纯 prompt 基线显著更稳</li>
+      </ul>
+      <p>这是 Agentar 能够在 BIRD test 接近人类专家的关键工程因素之一。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>论文报告的关键对比维度</h4>
+      <p>论文 Table 1 和 leaderboard 上对比了多个 NL2SQL 系统在 BIRD test 上的 EX 与 R-VES。核心定性结论：</p>
+      <ul>
+        <li>Agentar-Scale-SQL 报告 BIRD test <strong>81.67% EX / 77.00 R-VES</strong>，距 human expert 92.96% 缩窄</li>
+        <li>领先于 CHASE-SQL + Gemini（73.0%）、XiYan-SQL（75.63%）等学术 SOTA</li>
+        <li>与同期工业方案（Distyl、AskData + GPT-4o）处于同一梯队</li>
+        <li>具体每个对比方法的 EX/R-VES 数字以 <a href="https://bird-bench.github.io/" target="_blank">BIRD 官方 leaderboard</a> 为准</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>TTS 是新的 scaling 维度</strong>，且应被"编排"而非堆砌</li>
+            <li><strong>合成数据 + 偏好优化</strong> 是解决 BIRD 这类"长尾分布"benchmark 的关键</li>
+            <li><strong>难度感知预算</strong>是工业落地的必需</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>BIRD 榜首（81.67% EX）</li>
+            <li>开源 Agentar-Scale-SQL 仓库</li>
+            <li>系统化的 TTS 编排方法论</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>蚂蚁内部 Agentar 平台核心能力</li>
+            <li>把 NL2SQL 推到"接近人类专家"的实用水准</li>
+            <li>验证了"工业 + 学术 hybrid"路径的有效性</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>多策略 + 多模型 + 多轮 → 推理成本是 baseline 的 10×+</li>
+            <li>BIRD 仍然只是基准；Spider 2.0 / 真实企业场景差距仍大</li>
+            <li>合成数据可能引入 bias（论文承认）</li>
+            <li>开源版相比内部版有功能差异</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2509.24403" target="_blank">arXiv:2509.24403</a></li>
+      <li>💻 代码：<a href="https://github.com/antgroup/Agentar-Scale-SQL" target="_blank">github.com/antgroup/Agentar-Scale-SQL</a></li>
+      <li>📊 BIRD 榜单：<a href="https://bird-bench.github.io/" target="_blank">bird-bench.github.io</a></li>
+      <li>📑 关联：CHASE-SQL（多路径思想）· XiYan-SQL（多生成器）· Distyl Distillery（同期工业 SOTA）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · Agentar-Scale-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

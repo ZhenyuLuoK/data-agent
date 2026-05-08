@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RSL-SQL: Robust Schema Linking in Text-to-SQL · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2411.00073_RSL-SQL_Robust_Schema_Linking.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2411.00073 · 2024.11</div>
+    <h1>RSL-SQL: Robust Schema Linking in Text-to-SQL Generation</h1>
+    <div class="meta">
+      <span>👥 Zhenbiao Cao 等</span>
+      <span>🏛️ 国内研究团队（开源）</span>
+      <span>📅 2024.11</span>
+    </div>
+    <p class="tagline">
+      聚焦 NL2SQL 中最薄弱也最关键的一环 —— <strong>Schema Linking</strong> 的鲁棒性。
+      提出"<strong>双向 schema linking + 上下文自增强 + 二元投票（binary voting）</strong>"组合方案，
+      用 GPT-4o 在 BIRD-dev 达到 <strong>67.2% EX</strong>、Spider 达到 <strong>87.9% EX</strong>，
+      是 2024 年开源系统中 schema linking 路线的代表作。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">67.2%</div><div class="label">BIRD-dev EX (GPT-4o)</div></div>
+      <div class="stat"><div class="value">87.9%</div><div class="label">Spider EX (GPT-4o)</div></div>
+      <div class="stat"><div class="value">双向</div><div class="label">Schema Linking 路径</div></div>
+      <div class="stat"><div class="value">Open Source</div><div class="label">开源 SOTA</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 单向 Schema Linking 的两难</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 高 Recall 派：宁多勿少</h4>
+          <p>把"可能用到"的列全部纳入。problem：上下文长 + 噪声列干扰，让生成器误用无关列。</p>
+        </div>
+        <div>
+          <h4>② 高 Precision 派：精挑细选</h4>
+          <p>只保留"很可能用到"的列。problem：一旦遗漏关键列就直接生成失败。BIRD 上 schema linking 的<strong>漏列错误</strong>是头号 bug 来源。</p>
+        </div>
+        <div>
+          <h4>③ 单 LLM 决策不稳定</h4>
+          <p>同一道题、同一个 schema，LLM 在不同 temperature 下选出的列集合可能差很多。</p>
+        </div>
+        <div>
+          <h4>④ Schema 描述不完整时盲选</h4>
+          <p>列名缩写、缺描述、典型值缺失时，LLM 没有信号可依靠。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：双向 + 自增强 + 投票</h3>
+      <p>
+        ① <strong>Bidirectional Schema Linking</strong>：从问题→列（forward）和从列→问题（backward）两个方向各做一次 linking，提高 recall；<br/>
+        ② <strong>Contextual Information Augmentation</strong>：用 LLM 自动补全 schema 描述、典型值，让弱 schema 也有信号；<br/>
+        ③ <strong>Binary Voting</strong>：只有"两个方向都同意"的列才进入最终 sub-schema，过滤幻觉列；<br/>
+        ④ <strong>Multi-Turn Self-Correction</strong>：基于执行反馈做迭代修正。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + 完整 Schema</span>
+      <span class="arrow">→</span>
+      <span class="step">📋 Schema 上下文增强</span>
+      <span class="arrow">→</span>
+      <span class="step">↔️ 双向 Schema Linking</span>
+      <span class="arrow">→</span>
+      <span class="step">🗳️ 二元投票过滤</span>
+      <span class="arrow">→</span>
+      <span class="step">⚙️ SQL 生成</span>
+      <span class="arrow">↺</span>
+      <span class="step">🔧 多轮自纠错</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：四步鲁棒 Schema Linking</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Contextual Information Augmentation</h3>
+          <p>对原始 schema（仅有列名 + 类型）用 LLM 自动补全：</p>
+          <ul>
+            <li>列描述（猜测语义，例 <code>k_symbol</code> → "transaction symbol code"）</li>
+            <li>典型值（采样 N 行）</li>
+            <li>主键/外键关系强化</li>
+          </ul>
+          <p>让弱 schema 也具备和"完美 schema"接近的可读性。</p>
+        </div>
+        <div class="card">
+          <h3>② Bidirectional Schema Linking</h3>
+          <p><strong>Forward</strong>（Q→Cols）：传统做法，让 LLM 给定问题选列。</p>
+          <p><strong>Backward</strong>（Cols→Q）：让 LLM 给定每张表/列，回答"这个表/列与问题相关吗？置信度多少？"</p>
+          <p>两个方向取 <strong>交集</strong> = 双方都同意 = 高置信度列集。</p>
+        </div>
+        <div class="card">
+          <h3>③ Binary Voting</h3>
+          <p>对边界列（一边同意一边不同意），用 SQL skeleton 启发式判断：如果在 SQL skeleton 中能看到对应字段（如 GROUP BY 列、WHERE 列），则保留；否则丢弃。</p>
+          <p>这一步显著降低"幻觉列"问题。</p>
+        </div>
+        <div class="card">
+          <h3>④ Multi-Turn Self-Correction</h3>
+          <p>SQL 生成后执行：</p>
+          <ul>
+            <li>语法错 / 列不存在：回到 schema linking 调整 sub-schema</li>
+            <li>结果空 / 类型错：让 SQL 生成器修正</li>
+          </ul>
+          <p>最多 K 轮，基于执行反馈而非自审视。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把 schema linking 视为"双向的检索 + 投票"而非"单向的列选择"。这是把信息检索领域的"双塔召回 + 重排"思想移植到 NL2SQL。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>BIRD dev / test（含外部知识/脏数据）</li>
+          <li>Spider 1.0 dev / test</li>
+          <li>开源 LLM 一致性评估（GPT-4o、DeepSeek、Qwen）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL、MAC-SQL、CHESS、TA-SQL</li>
+          <li>仅 Forward Schema Linking</li>
+          <li>仅 Backward Schema Linking</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-2">
+        <div class="metric">
+          <div class="label">BIRD-dev EX (GPT-4o)</div>
+          <div class="value">67.2<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:67.2%;"></div></div>
+          <div class="delta up">论文官方 · 2024 当时开源 SOTA</div>
+        </div>
+        <div class="metric">
+          <div class="label">Spider EX (GPT-4o)</div>
+          <div class="value">87.9<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:87.9%;"></div></div>
+          <div class="delta up">论文官方</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：RSL-SQL 论文（<a href="https://arxiv.org/abs/2411.00073" target="_blank">arXiv:2411.00073 v2</a>，作者 Cao 等）+ 开源仓库 README。具体逐组件消融数字详见论文 Table。</p>
+
+      <h3>消融定性结论（论文 Section 4）</h3>
+      <ul>
+        <li>仅 Forward Schema Linking：recall 较好但 precision 不足，幻觉列偏多</li>
+        <li>仅 Backward Schema Linking：precision 较好但漏列问题明显</li>
+        <li>仅做双向（无 binary voting）：综合效果有限</li>
+        <li>完整四模块（Augment + Bidirectional + Voting + Self-Correction）：BIRD-dev 67.2%、Spider 87.9%</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 方法 — Schema Linking 误差类型剖析</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">论文将 schema linking 的失败模式归为以下两类，并给出 RSL-SQL 中对应的解决机制（基于论文 Section 3 的设计动机）。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">误差 1: 漏列（missing column）</button>
+      <button class="tab-btn" data-tab="c2">误差 2: 幻觉列（hallucinated column）</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>漏列：高 precision 单向 linking 的典型病灶</h4>
+      <p>当 LLM 仅做"问题→列"的 forward pass 时，对那些"列名与问题字面无强重叠但业务必需"的列容易遗漏（例如计算比例时缺分母列、聚合时缺 GROUP BY 列）。</p>
+      <p>RSL-SQL 的处理：</p>
+      <ul>
+        <li>① <strong>Backward pass</strong>：从每张表/列出发反向"是否与问题相关"，捕获字面无重叠但语义相关的列；</li>
+        <li>② <strong>Schema Augmentation</strong> 在缩写列名上自动补描述与典型值，让"业务相关性"判断有依据；</li>
+        <li>③ 最终的 binary voting 让有"任一方向支持 + SQL skeleton 佐证"的列入选。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>幻觉列：高 recall 路线的典型病灶</h4>
+      <p>当 schema linking 倾向于宁多勿少时，无关列大量进入 prompt，干扰 SQL 生成器选择正确的 JOIN/WHERE 列，常导致语法对但语义错的 SQL。</p>
+      <p>RSL-SQL 的处理：</p>
+      <ul>
+        <li>① <strong>双向交集</strong>过滤"只一个方向支持"的弱信号列；</li>
+        <li>② <strong>Binary Voting</strong> 用 SQL skeleton 启发式作裁判（边界列若不在 skeleton 中出现 → 丢弃）；</li>
+        <li>③ <strong>Multi-Turn Self-Correction</strong> 在执行后基于错误信号回退并修正 sub-schema。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>双向 &gt; 单向</strong>：信息检索经典范式</li>
+            <li><strong>上下文自增强</strong>：弱 schema 也能被救活</li>
+            <li><strong>投票 + 启发式</strong>：避免单 LLM 决策不稳定</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>NL2SQL 开源 SOTA（2024-11 时点）</li>
+            <li>双向 schema linking 方法论被后续多个工作借鉴</li>
+            <li>开源代码与数据：<a href="https://github.com/Laqcce-cao/RSL-SQL" target="_blank">github.com/Laqcce-cao/RSL-SQL</a></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>是 NL2SQL 项目落地中"schema linking 子模块"的常见参考实现</li>
+            <li>启发了 X-SQL、LinkAlign 等后续 schema linking 改进工作</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>双向需 2 倍 LLM 调用，token 成本 ~2× 单向</li>
+            <li>大型 schema（千列）下两次都跑仍然贵</li>
+            <li>对极端缩写/无描述的 schema，自增强也会幻觉</li>
+            <li>对 Spider 2.0 这种企业级 schema 仍未充分验证</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2411.00073" target="_blank">arXiv:2411.00073</a></li>
+      <li>💻 代码：<a href="https://github.com/Laqcce-cao/RSL-SQL" target="_blank">github.com/Laqcce-cao/RSL-SQL</a></li>
+      <li>📑 关联：DIN-SQL（schema linking 起源）· CHESS（schema 检索）· X-SQL（专家化 LLM 过滤）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · RSL-SQL · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

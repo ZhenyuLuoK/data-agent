@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Interpreter: An LLM Agent for Data Science · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2402.18679" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2402.18679 · 2024.02 · DeepWisdom & MetaGPT 团队</div>
+    <h1>Data Interpreter: An LLM Agent For Data Science</h1>
+    <div class="meta">
+      <span>👥 Sirui Hong, Yizhang Lin, Bang Liu 等</span>
+      <span>🏛️ DeepWisdom / MetaGPT</span>
+      <span>📅 2024.02 (v1) → 2024.10 (v4)</span>
+    </div>
+    <p class="tagline">
+      面向数据科学全流程（数据加载 → EDA → 特征工程 → 建模 → 评估）的<strong>端到端 LLM Agent</strong>。
+      三大核心技术：① <strong>Hierarchical Graph-based Plan</strong>（动态可改的层级任务图）；
+      ② <strong>Tool Integration & Generation</strong>（按需检索/合成代码工具）；
+      ③ <strong>Verification + Experience-driven Reasoning</strong>（基于执行反馈的自纠错与经验记忆）。
+      在 ML-Benchmark 综合得分 <strong>0.95</strong>（vs AutoGen 0.86），MATH <strong>94.93</strong>。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">0.95</div><div class="label">ML-Benchmark 综合分</div></div>
+      <div class="stat"><div class="value">+10.4%</div><div class="label">vs AutoGen (0.86)</div></div>
+      <div class="stat"><div class="value">94.93</div><div class="label">MATH 数据集</div></div>
+      <div class="stat"><div class="value">End-to-End</div><div class="label">数据科学全流程</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 LLM 数据科学 Agent 的痛点</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 计划僵硬，难以适应数据真实情况</h4>
+          <p>传统 ReAct / AutoGen 风格 Agent 在执行前一次性规划，遇到数据异常（缺失值、类型错误、维度不符）时无法动态调整步骤。</p>
+        </div>
+        <div>
+          <h4>② 工具不够 / 工具过多</h4>
+          <p>数据科学涉及 sklearn / xgboost / lightgbm / autosklearn 等大量库；硬塞工具描述会爆 prompt，未提供则 LLM 自行写代码错漏百出。</p>
+        </div>
+        <div>
+          <h4>③ 错误难以收敛</h4>
+          <p>真实数据 pipeline 的 bug 往往在中间步骤（特征对不上、leakage）才暴露，需要"<strong>带上下游记忆</strong>"的纠错。</p>
+        </div>
+        <div>
+          <h4>④ 经验无法复用</h4>
+          <p>每次任务从零开始，无法利用历史成功 / 失败的"经验"，导致重复犯同类错误。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：把数据科学过程显式化为"<strong>动态层级图</strong>"</h3>
+      <p>
+        Data Interpreter 提出三层耦合的关键技术：<br/>
+        ① <strong>Hierarchical Graph-based Plan</strong>：把任务拆成层级图（粗粒度任务 → 细粒度子步骤），每个节点对应一段可执行 code；图可以在执行中根据数据状态<strong>动态修改</strong>；<br/>
+        ② <strong>Tool Integration & Generation</strong>：内置一组数据科学工具，按需检索；缺失时让 LLM 即时合成新工具并加入工具库；<br/>
+        ③ <strong>Verification + Experience-driven Reasoning</strong>：每个节点执行后跑断言/统计验证；把成功 trajectory 抽象为可复用的 experience，喂给后续相似任务。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">数据科学任务</span>
+      <span class="arrow">→</span>
+      <span class="step">🗺️ Hierarchical Graph Plan</span>
+      <span class="arrow">→</span>
+      <span class="step">🛠️ Tool Retrieval / Generation</span>
+      <span class="arrow">→</span>
+      <span class="step">⚙️ 节点执行 + 验证</span>
+      <span class="arrow">↺</span>
+      <span class="step">🧠 Experience 抽取与复用</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：三大核心技术</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Hierarchical Graph-based Plan</h3>
+          <p>把任务表示为一个层级图：</p>
+          <ul>
+            <li><strong>父节点</strong>：粗粒度阶段（如 EDA、特征工程、模型训练）</li>
+            <li><strong>子节点</strong>：可执行步骤（一段 Python code）</li>
+            <li><strong>边</strong>：依赖关系（数据流 + 控制流）</li>
+          </ul>
+          <p>关键能力：<strong>Graph Refinement</strong> —— 执行中可以增删节点 / 改边 / 拆细。例如发现某列缺失率 30% → 动态新增一个"缺失值处理"节点。</p>
+        </div>
+
+        <div class="card">
+          <h3>② Tool Integration & Generation</h3>
+          <p>预置工具库覆盖常见数据科学操作（pandas / sklearn / xgboost / lightgbm / EDA / 可视化）。</p>
+          <p>动态扩展：</p>
+          <ul>
+            <li>遇到工具未覆盖的需求时，LLM 写一段 Python 代码作为新工具；</li>
+            <li>新工具经验证后加入工具库（带 docstring + 输入/输出 schema）；</li>
+            <li>下次相似任务可直接检索复用。</li>
+          </ul>
+          <p>这种"<strong>工具是动态生成的</strong>"思想，使 Agent 不必依赖先验完整工具集。</p>
+        </div>
+
+        <div class="card">
+          <h3>③ Verification 机制</h3>
+          <p>每个节点执行后，自动生成断言/检查：</p>
+          <ul>
+            <li>数据形状（rows / cols / dtype）是否符合预期</li>
+            <li>训练 loss 是否收敛、val score 是否在合理区间</li>
+            <li>预测分布是否异常（例如分类不平衡突变）</li>
+          </ul>
+          <p>不通过则触发 <strong>Refinement</strong>：回到 Plan 节点，调整子图。</p>
+        </div>
+
+        <div class="card">
+          <h3>④ Experience-driven Reasoning</h3>
+          <p>对成功完成的任务，Data Interpreter 抽取以下 experience：</p>
+          <ul>
+            <li>任务签名（数据集类型 + 任务类型）</li>
+            <li>关键决策点（如何处理类不平衡、如何选模型）</li>
+            <li>常见 pitfall（如 target leakage、scale 不一致）</li>
+          </ul>
+          <p>下次遇到相似任务（用 RAG 召回），把 experience 注入 prompt，<strong>避免重复试错</strong>。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把"数据科学家的工作流"显式建模为图 + 工具 + 验证 + 经验。这是从 ReAct（线性思考-执行）向"<strong>结构化 Agent</strong>"的关键演进，对后续 Open Interpreter / Data Formulator / DB-GPT-Hub 都有影响。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li><strong>ML-Benchmark</strong>：8 个 sklearn 数据集（titanic, ICR, santander, ... ），完整 ML pipeline</li>
+          <li><strong>InfiAgent-DABench</strong>：表格数据分析问答</li>
+          <li><strong>MATH</strong>：数学问题求解（验证 code-as-tool 推理）</li>
+          <li><strong>开放式任务</strong>：网页仿真、OCR、SD 微调等</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>AutoGen（Microsoft 多 Agent 框架）</li>
+          <li>OpenAgents</li>
+          <li>TaskWeaver</li>
+          <li>纯 GPT-4 + Code Interpreter</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">ML-Benchmark 综合分</div>
+          <div class="value">0.95</div>
+          <div class="bar"><div style="width:95%;"></div></div>
+          <div class="delta up">vs AutoGen 0.86</div>
+        </div>
+        <div class="metric">
+          <div class="label">MATH (PoT)</div>
+          <div class="value">94.93</div>
+          <div class="bar"><div style="width:94.93%;"></div></div>
+          <div class="delta up">超越同期 LLM agent baseline</div>
+        </div>
+        <div class="metric">
+          <div class="label">InfiAgent-DABench</div>
+          <div class="value">SOTA</div>
+          <div class="bar"><div style="width:90%;"></div></div>
+          <div class="delta up">论文 Table 多项指标领先</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：Data Interpreter 论文（<a href="https://arxiv.org/abs/2402.18679" target="_blank">arXiv:2402.18679 v4</a>，Hong et al., 2024，Table 1）。综合分 = 任务通过率 / 加权指标的均值。</p>
+
+      <h3>关键消融发现（论文 Section 5）</h3>
+      <ul>
+        <li>移除 <strong>Hierarchical Graph Plan</strong>：在长流水线 ML 任务上失败率显著上升（无法应对数据异常）</li>
+        <li>移除 <strong>Tool Integration</strong>：simpler 任务影响小，复杂数据预处理任务效率显著下降</li>
+        <li>移除 <strong>Verification</strong>：错误传递到下游 → 累积错误导致整段失败</li>
+        <li>移除 <strong>Experience</strong>：对单次任务影响小，对"任务集合"上的累积学习影响大</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 论文展示的代表性应用</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">论文 Figure 7 与 Section 4 展示了三类典型 runtime 场景。以下基于论文公开内容描述。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">应用 1: Machine Learning</button>
+      <button class="tab-btn" data-tab="c2">应用 2: Webpage Imitation</button>
+      <button class="tab-btn" data-tab="c3">应用 3: Math Problem</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>端到端 ML Pipeline</h4>
+      <p>论文展示在 Kaggle / sklearn 风格数据集上，Data Interpreter 自主完成：数据载入 → EDA → 缺失值处理 → 特征构造 → 模型选择 → 调参 → 评估。Hierarchical Graph Plan 在执行中根据数据真实情况（如类别不平衡、缺失列）动态扩展子图。</p>
+      <p>论文 Table 1：Data Interpreter 在 8 个 ML 数据集上综合得分 0.95，显著高于 AutoGen 0.86。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>从截图复刻网页</h4>
+      <p>给定一个网页截图，Data Interpreter 调用视觉/HTML 生成工具产出 HTML/CSS。这类任务展示其"<strong>工具按需合成</strong>"能力：当预置工具库不足时，Agent 即时写入新工具并复用。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>数学问题（Code as Tool）</h4>
+      <p>对 MATH 数据集，Data Interpreter 把数学题转译为可执行 Python（PoT, Program-of-Thought）。论文报告 <strong>94.93</strong> 分，领先同期方法。</p>
+      <p>这一应用也验证了"Verification 节点"对算术准确性的关键作用：执行得到具体数值结果 + 类型检查可以排除大量幻觉答案。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>动态图 &gt; 静态计划</strong>：数据科学需要 plan-as-it-goes</li>
+            <li><strong>Tool 是流动的，不是固定字典</strong></li>
+            <li><strong>Verification 是 hallucination 的真正解药</strong></li>
+            <li><strong>Experience 是 Agent 的长期价值</strong></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>Hierarchical Graph-based Plan 范式</li>
+            <li>动态工具合成 + 工具库增长</li>
+            <li>开源 MetaGPT 的旗舰 Agent 实现</li>
+            <li>ML-Benchmark / DABench 等评测体系</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>MetaGPT 项目核心组件，被工业 / 创业团队广泛使用</li>
+            <li>启发 OpenAI Code Interpreter 类工具的可解释化</li>
+            <li>是 LLM 数据科学 agent survey（2508.02744）中的核心引用</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>Hierarchical Graph 的执行成本高于线性 ReAct</li>
+            <li>动态工具合成的安全性 / 沙箱隔离需要工程加固</li>
+            <li>Experience 库随时间膨胀，需要 retention / refresh 策略</li>
+            <li>对数据库类任务（NL2SQL、跨多 DB JOIN）覆盖有限</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2402.18679" target="_blank">arXiv:2402.18679</a></li>
+      <li>💻 代码：<a href="https://github.com/geekan/MetaGPT" target="_blank">github.com/geekan/MetaGPT</a>（Data Interpreter 是其旗舰 Agent）</li>
+      <li>📑 关联：MetaGPT（多 Agent 框架）· AutoGen · TaskWeaver · DB-GPT</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · Data Interpreter · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

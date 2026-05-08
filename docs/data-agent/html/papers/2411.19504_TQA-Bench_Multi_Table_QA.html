@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TQA-Bench: Multi-Table QA Benchmark · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#construction">构建</a>
+      <a href="#eval">评估</a>
+      <a href="#findings">实证</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2411.19504" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2411.19504 · 2024.11</div>
+    <h1>TQA-Bench: Evaluating LLMs for Multi-Table Question Answering with Scalable Context and Symbolic Extension</h1>
+    <div class="meta">
+      <span>👥 Zipeng Qiu, Yujian Peng, Guanjie He, Bo Yuan, Chao Wang</span>
+      <span>📅 2024.11</span>
+    </div>
+    <p class="tagline">
+      为多表 QA 设计的<strong>新一代评测基准</strong>：聚焦"<strong>跨多表推理</strong>"+"<strong>可扩展上下文长度</strong>"+"<strong>符号化扩展</strong>"。
+      与 Spider/BIRD 关注 SQL 生成不同，TQA-Bench 直接评估 LLM <strong>看到多张表后能不能给出正确答案</strong>，
+      是 TableQA / 数据 Agent 中一个高质量、可控难度的新尺子。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">Multi-Table</div><div class="label">跨多张表推理</div></div>
+      <div class="stat"><div class="value">Scalable</div><div class="label">上下文长度可控</div></div>
+      <div class="stat"><div class="value">Symbolic</div><div class="label">符号化扩展评估</div></div>
+      <div class="stat"><div class="value">QA</div><div class="label">直接答案评估</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 研究空白与动机</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 TableQA / NL2SQL benchmark 的不足</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 单表为主</h4>
+          <p>WikiTableQuestions、TabFact 等多为单表。但企业现实是多表 JOIN。</p>
+        </div>
+        <div>
+          <h4>② 上下文长度固定</h4>
+          <p>几乎所有 benchmark 都把 schema/数据塞 prompt，但没人系统研究"上下文从 4K 到 128K"对推理的影响。</p>
+        </div>
+        <div>
+          <h4>③ SQL vs QA 的混淆</h4>
+          <p>Spider/BIRD 评估 SQL 生成正确性，但用户真正关心的是<strong>答案</strong>。SQL 错误但答案对、SQL 对但执行报错的情况都未充分讨论。</p>
+        </div>
+        <div>
+          <h4>④ 数据规模的影响未测</h4>
+          <p>表行数从 10 到 100,000 的影响如何？多数 benchmark 用固定规模。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ TQA-Bench 的核心创新</h3>
+      <p>
+        ① <strong>多表场景</strong>：所有任务涉及 2 个或更多表的 JOIN/聚合；<br/>
+        ② <strong>可扩展上下文</strong>：每个任务可以以不同上下文长度（短/中/长）呈现，方便研究 long context 能力；<br/>
+        ③ <strong>符号化扩展（Symbolic Extension）</strong>：把数据替换为不同规模/分布的"符号化"版本，控制语义一致但难度不同；<br/>
+        ④ <strong>直接 QA 评估</strong>：给定问题与表，直接对答案评分，绕过 SQL 形式。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">真实多表数据</span>
+      <span class="arrow">→</span>
+      <span class="step">问题模板生成</span>
+      <span class="arrow">→</span>
+      <span class="step">符号化扩展（控制规模）</span>
+      <span class="arrow">→</span>
+      <span class="step">多上下文呈现（4K~128K）</span>
+      <span class="arrow">→</span>
+      <span class="step">LLM 直接答 → 评分</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="construction">
+    <div class="container" style="padding:0;">
+      <h2>2. Benchmark 构建</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① 数据源</h3>
+          <ul>
+            <li>开源关系数据库 schema（如 BIRD-style 数据库）</li>
+            <li>含真实业务关系的多表场景</li>
+            <li>覆盖事实表 + 维度表的常见 JOIN 模式</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>② 问题模板</h3>
+          <ul>
+            <li>聚合（SUM / AVG / MAX）</li>
+            <li>过滤 + 聚合（多条件 WHERE）</li>
+            <li>多表 JOIN 后的统计</li>
+            <li>嵌套查询（top-k / 排名）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>③ Symbolic Extension</h3>
+          <p>核心创新：基于一个"种子"问题，可以系统化生成不同行数、不同分布的等价问题。</p>
+          <p>例如：原表 100 行 → 扩展到 1k / 10k / 100k 行；问题语义不变，但数据规模和上下文压力大不同。</p>
+        </div>
+        <div class="card">
+          <h3>④ 上下文压缩 vs 完整</h3>
+          <p>同一问题，提供：</p>
+          <ul>
+            <li>仅 schema（无数据）</li>
+            <li>schema + 抽样数据</li>
+            <li>schema + 完整数据（dump 进 prompt）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>对比模型</h3>
+        <ul>
+          <li>GPT-4o、GPT-3.5</li>
+          <li>Claude-3.5-Sonnet</li>
+          <li>开源 LLM（Llama-3、Qwen 等）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评测设置</h3>
+        <ul>
+          <li>多种上下文长度（4K / 16K / 64K / 128K）</li>
+          <li>多种数据规模（10 行 → 10k 行）</li>
+          <li>End-to-End QA（答案匹配）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="findings">
+    <div class="container" style="padding:0;">
+      <h2>4. 实证发现</h2>
+
+      <h3>论文报告的关键定性发现</h3>
+      <p style="color:var(--text-soft); font-size:.9rem;">基于 TQA-Bench 论文（<a href="https://arxiv.org/abs/2411.19504" target="_blank">arXiv:2411.19504</a>）实验章节与第三方 reproduction（<a href="https://www.arxiv.org/pdf/2505.07453v1" target="_blank">arXiv:2505.07453</a>）：</p>
+
+      <ul>
+        <li><strong>上下文长度的悬崖效应</strong>：在多数 LLM（Llama-3.1、Qwen-2.5、Mistral、DeepSeek-R1）上，<strong>当输入超过 ~4K token 时准确率显著下降</strong>；唯一例外是 GPT-4o-mini 在 4K 后仍保持相对稳定。</li>
+        <li><strong>表数量的负面影响</strong>：从 2 表 → 5 表 → 8 表，准确率呈梯度下降；多数模型在 ≥5 表场景上接近随机基线。</li>
+        <li><strong>聚合算子越复杂越难</strong>：MAX / MIN / 简单 SUM &gt; 多条件 AVG / 占比类 &gt; 多表 JOIN 后聚合 &gt; top-k 嵌套。</li>
+        <li><strong>"NL2SQL + 执行"普遍胜过"直接表-QA"</strong>：当 LLM 自己生成 SQL 并执行时，准确率明显高于把全表数据塞进 prompt 让其推理；TQA-Bench 论文在结论中明确把这作为推荐 pipeline。</li>
+        <li><strong>符号化扩展的泛化测试</strong>：同一问题语义下，把表行数从 100 扩到 10k，多数 LLM 准确率显著下滑，表明并非真正"理解"关系，而是在小数据上"看穿"了答案。</li>
+      </ul>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">注：TQA-Bench 论文报告了多种 LLM × 多种 context 长度 × 多种规模的完整数字矩阵；此处不复制具体单点分数，避免在任何一个组合上误读。详见原文 Section 5（Experiments）。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>5. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 Benchmark 设计哲学</h3>
+          <ul>
+            <li>"<strong>可控规模</strong>"是评估 long-context 必备维度</li>
+            <li><strong>QA 而非 SQL</strong>：聚焦最终用户价值</li>
+            <li><strong>符号化扩展</strong>：从语义不变出发探究规模影响</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 实践影响</h3>
+          <ul>
+            <li>验证了"NL2SQL → 执行"在多表 QA 上的鲁棒性优势</li>
+            <li>给 Data Agent 设计提供"何时该写 SQL，何时该把数据塞 prompt"的依据</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 后续工作</h3>
+          <ul>
+            <li>已被多个表 QA / Data Agent 工作引用为标准评测</li>
+            <li>启发了 OpenDataBench、TReB 等更细粒度的 benchmark</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>大表完整 dump 到 prompt 在生产几乎不可行（成本/限长）</li>
+            <li>问题模板覆盖有限，可能不充分覆盖真实分析需求</li>
+            <li>未涵盖中文 schema 与中文问题</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>6. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2411.19504" target="_blank">arXiv:2411.19504</a></li>
+      <li>📑 关联：Spider 2.0（NL2SQL benchmark）· BIRD · WikiTableQuestions</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · TQA-Bench · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

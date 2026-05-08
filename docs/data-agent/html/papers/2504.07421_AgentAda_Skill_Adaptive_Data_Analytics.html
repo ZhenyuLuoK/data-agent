@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentAda: Skill-Adaptive Data Analytics for Tailored Insight Discovery · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2504.07421" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2504.07421 · 2025.04 (v1) → 2025.10 (v3) · ServiceNow Research / UBC / Mila</div>
+    <h1>AgentAda: Skill-Adaptive Data Analytics for Tailored Insight Discovery</h1>
+    <div class="meta">
+      <span>👥 Amirhossein Abaskohi, Amrutha Varshini Ramesh, Issam H. Laradji 等 (9 作者)</span>
+      <span>🏛️ ServiceNow / UBC / Mila / Polytechnique Montréal</span>
+      <span>📅 2025.04</span>
+    </div>
+    <p class="tagline">
+      <strong>首个能"学习并使用新分析技能"的 LLM 数据分析 Agent</strong>。区别于固定 EDA / 通用 ChatBI 类工具，
+      AgentAda 维护一个<strong>分析技能库</strong>（聚类、预测建模、BERT NLP 等），
+      自动根据用户目标 + 数据形态匹配最合适的技能。三步骤 pipeline：
+      ① <strong>Question Generator</strong>（针对用户 persona/goal 生成查询） →
+      ② <strong>Hybrid RAG Skill Matcher</strong>（从技能库选最佳分析方法） →
+      ③ <strong>Code Generator</strong>（基于技能文档产出可执行代码）。
+      Human eval：<strong>48.78%</strong> 评估者偏好 AgentAda，对比 unskilled agent 27.67%。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">48.78%</div><div class="label">人工评估首选率</div></div>
+      <div class="stat"><div class="value">27.67%</div><div class="label">Unskilled Agent 首选率</div></div>
+      <div class="stat"><div class="value">+21.11pt</div><div class="label">人工偏好差距</div></div>
+      <div class="stat"><div class="value">KaggleBench</div><div class="label">新 benchmark 提出</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 LLM 数据分析工具的局限</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 用户得手动指定方法</h4>
+          <p>典型场景：用户必须自己说"对这份数据做 K-Means 聚类"或"训练随机森林"。如果用户不懂，工具就不会用 —— 把<strong>方法选择</strong>的负担推给了用户。</p>
+        </div>
+        <div>
+          <h4>② LLM 自带技能集有限</h4>
+          <p>纯 prompt 让 LLM 写 sklearn 代码，对常规 EDA 还行；但涉及 BERT/Transformer NLP、复杂时序模型、专门统计方法时，LLM 本身经验不足，写出来的代码经常错。</p>
+        </div>
+        <div>
+          <h4>③ 通用化 vs 专业化的割裂</h4>
+          <p>已有 Code Interpreter 类工具偏通用（&ldquo;能跑就行&rdquo;），但用户期待的是"<strong>给我深度洞察</strong>"（业务级、领域特异）。</p>
+        </div>
+        <div>
+          <h4>④ 评测范式缺失</h4>
+          <p>现有数据分析 agent benchmark 多关注是否答对单一查询，缺少对"<strong>洞察质量</strong>（insightfulness）"这种主观但关键的维度的评测。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察：用"<strong>可扩展技能库</strong>"+"<strong>RAG 技能匹配</strong>"解锁专家方法</h3>
+      <p>
+        AgentAda 把"分析方法"从 LLM 的隐式知识中抽离出来，做成一个<strong>显式可检索、可扩展的技能库</strong>。
+        每个技能 = 一段方法文档 + 调用接口 + 适用场景描述。
+        Hybrid RAG Skill Matcher 根据"用户目标 + 数据形态 + 候选技能描述"做检索 + 重排，自动选最合适的技能；
+        Code Generator 拿到技能文档后产出可执行代码。
+        这套设计让 AgentAda 能用<strong>专家方法（聚类、预测建模、BERT NLP 等）</strong>，而无需用户懂这些方法。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">用户 goal + persona</span>
+      <span class="arrow">→</span>
+      <span class="step">❓ Question Generator</span>
+      <span class="arrow">→</span>
+      <span class="step">📚 Hybrid RAG Skill Matcher</span>
+      <span class="arrow">→</span>
+      <span class="step">💻 Code Generator</span>
+      <span class="arrow">→</span>
+      <span class="step">🎯 Tailored Insights</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：Skill-Adaptive Three-Stage Pipeline</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Question Generator</h3>
+          <p>输入：用户 persona（角色：营销总监/数据科学家/财务）+ 高层目标（"找出本季度营收异常的客户群"）+ 数据元信息。</p>
+          <p>输出：<strong>结构化查询列表</strong>（细化为可分析的子问题）。</p>
+          <p>关键设计：persona-aware —— 同一份数据对营销总监 vs 财务，应当生成不同侧重的问题。</p>
+        </div>
+
+        <div class="card">
+          <h3>② Hybrid RAG Skill Matcher</h3>
+          <p>技能库：覆盖聚类、回归 / 分类预测、时序、关联规则、BERT 等 NLP 方法。每条 skill 包含：</p>
+          <ul>
+            <li>名称 + 简要说明</li>
+            <li>适用条件（数据形态、目标类型）</li>
+            <li>调用范式 / 关键 API</li>
+            <li>已知局限性</li>
+          </ul>
+          <p><strong>Hybrid RAG</strong>：稀疏检索（BM25 关键词）+ 稠密检索（embedding 相似度）混合排序，避免单一检索方式漏召。</p>
+        </div>
+
+        <div class="card">
+          <h3>③ Code Generator</h3>
+          <p>给 LLM 注入：用户的细化问题 + 选中的技能文档 + 数据 schema。</p>
+          <p>LLM 生成：可执行的 Python 代码（pandas + sklearn / transformers / statsmodels 等）。</p>
+          <p>关键效益：因为 prompt 里有"<strong>技能文档</strong>"作为强约束，LLM 不再凭直觉乱写，而是按技能文档的范式调用 —— 显著提升专门方法的代码正确率。</p>
+        </div>
+
+        <div class="card">
+          <h3>④ LLM-as-a-Judge（评测创新）</h3>
+          <p>论文还提出用强 LLM 当 judge，对 insight 质量打分（faithfulness / specificity / actionability）。</p>
+          <p>论文实证：LLM-judge 评分与人类 evaluator 的偏好<strong>高度对齐</strong>，可以作为大规模 insight 自动评测的代理。</p>
+          <p>这条贡献对整个 Data Agent 评测领域有方法论价值。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：把"<strong>分析方法</strong>"这一类知识从 LLM 隐参数中显式化为可检索资产，是 LLM-Tool-Use 思想在数据分析上的落地。skill 可以增量添加，使 Agent 能力<strong>随时间增长</strong>而非固化。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架：KaggleBench + 人工评估 + LLM Judge</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>KaggleBench（论文提出的新 benchmark）</h3>
+        <ul>
+          <li>从 Kaggle 各领域整理 curated notebook 形成评测集</li>
+          <li>覆盖多个领域（金融、健康、社交、零售等）</li>
+          <li>每条样本提供：数据集 + 用户 persona + 高层 goal</li>
+          <li>评测目标：<strong>洞察质量</strong>（insight quality），而非"答对一次查询"</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>评测维度</h3>
+        <ul>
+          <li><strong>Human evaluation</strong>：评估者在 AgentAda vs unskilled agent 输出之间二选一</li>
+          <li><strong>LLM-as-a-judge</strong>：自动化打分，与人类偏好对齐</li>
+          <li>Faithfulness（忠于数据）</li>
+          <li>Specificity（领域细致度）</li>
+          <li>Actionability（可行动性）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">Human eval 首选 AgentAda</div>
+          <div class="value">48.78%</div>
+          <div class="bar"><div style="width:48.78%;"></div></div>
+          <div class="delta up">vs 不带技能库 27.67%</div>
+        </div>
+        <div class="metric">
+          <div class="label">Unskilled Agent 首选率</div>
+          <div class="value">27.67%</div>
+          <div class="bar"><div style="width:27.67%;"></div></div>
+          <div class="delta">基线对比</div>
+        </div>
+        <div class="metric">
+          <div class="label">偏好差距</div>
+          <div class="value">+21.11pt</div>
+          <div class="bar"><div style="width:80%;"></div></div>
+          <div class="delta up">显著优势</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：AgentAda 论文 Abstract（<a href="https://arxiv.org/abs/2504.07421" target="_blank">arXiv:2504.07421 v3</a>）："48.78% of evaluators preferring its analyses, compared to 27.67% for the unskilled agent"。</p>
+
+      <h3>关键发现</h3>
+      <ul>
+        <li><strong>技能库的存在显著提升 insight 质量</strong>：人类评估者更倾向 AgentAda 而非无技能版</li>
+        <li><strong>LLM judge 与人类对齐</strong>：可以作为大规模评测的可靠代理（论文 alignment 实验）</li>
+        <li><strong>persona-aware 问题生成</strong>有效：相同数据对不同角色给出不同侧重的分析</li>
+        <li><strong>Hybrid RAG 优于单一检索</strong>：稀疏 + 稠密混合的 skill 检索更稳定</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 论文展示的代表性场景</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于论文 abstract / introduction 给出的能力定位。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">场景 1: 聚类发现客户分群</button>
+      <button class="tab-btn" data-tab="c2">场景 2: BERT NLP 分析评论</button>
+      <button class="tab-btn" data-tab="c3">场景 3: Persona 驱动差异化</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>专家方法解锁：聚类</h4>
+      <p>用户给出"找出客户分群"这种高层目标。普通 LLM 可能给出 GroupBy 统计（不够），AgentAda 通过 Skill Matcher 选中 Clustering 技能，按技能文档调用 K-Means / DBSCAN，并自动选择特征列、预处理（标准化）、解读簇。</p>
+      <p>价值：用户不用懂聚类方法本身，就能用上专家级别的工具。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>NLP 分析评论文本</h4>
+      <p>用户问"客户评论的主要情绪与主题是什么"。AgentAda 选中 BERT NLP skill —— 这是普通 LLM 直接写代码容易写错（tokenizer / model card / pipeline 配置）的领域。Skill 文档把正确范式注入 prompt，Code Generator 输出可跑的代码。</p>
+      <p>论文重点强调：这类"<strong>LLM out-of-the-box 不会做</strong>"的方法，正是 skill library 的核心价值。</p>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>Persona 差异化分析</h4>
+      <p>同一份销售数据：</p>
+      <ul>
+        <li>对"营销总监" → 关注客户画像、转化漏斗、推广 ROI；</li>
+        <li>对"财务总监" → 关注利润率、坏账风险、现金流；</li>
+        <li>对"数据科学家" → 关注异常检测、预测建模、特征重要性。</li>
+      </ul>
+      <p>Question Generator 把 persona 作为关键输入，使生成的子问题与最终 insight 高度差异化。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>方法显式化</strong>：把分析方法做成可检索资产</li>
+            <li><strong>persona-aware</strong>：洞察的价值依赖角色背景</li>
+            <li><strong>专业能力可叠加</strong>：技能库随时间扩展</li>
+            <li><strong>评测要看 insight 质量</strong>，不是单步对错</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>Skill-Adaptive Pipeline（首个 skill library 风格的数据分析 Agent）</li>
+            <li>Hybrid RAG Skill Matcher</li>
+            <li>KaggleBench 评测集</li>
+            <li>LLM-as-a-judge 对齐人类偏好的方法</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>是 LLM 数据分析 agent 综述（2508.02744）中"skill library"路线的代表</li>
+            <li>对企业 BI 类产品设计直接借鉴：方法库 + 自动选择 = 降低用户门槛</li>
+            <li>LLM-judge 方法可推广到其他主观任务的自动评测</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>技能库需要人工策划与维护，技能描述质量直接影响 Matcher 效果</li>
+            <li>当数据规模很大（GB 级）时，单 notebook 风格 Code 执行成本高</li>
+            <li>对多步骤、跨技能的复杂分析任务，单次 skill matching 不够，可能需要 plan 层</li>
+            <li>未来：与 Hierarchical Plan（如 Data Interpreter）结合，做成 plan + skill library 的混合形态</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2504.07421" target="_blank">arXiv:2504.07421</a></li>
+      <li>📊 KaggleBench：随论文发布的评测集</li>
+      <li>📑 关联工作：Data Interpreter（Plan 路线）· DB-GPT（系统/工程路线）· Code Interpreter（通用路线）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · AgentAda · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM-based Data Science Agent: A Survey · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">动机</a>
+      <a href="#agent-view">Agent 视角</a>
+      <a href="#ds-view">DS 视角</a>
+      <a href="#methods">代表方法</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2508.02744" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2508.02744 · 2025.08 (v1) → 2025.11 (v2) · Survey</div>
+    <h1>Large Language Model-based Data Science Agent: A Survey</h1>
+    <div class="meta">
+      <span>👥 Ke Chen, Peiran Wang, Yaoning Yu, Xianyang Zhan, Haohan Wang</span>
+      <span>🏛️ UIUC 等</span>
+      <span>📅 2025.08</span>
+    </div>
+    <p class="tagline">
+      面向 LLM-based Data Science Agent 的系统综述。
+      贡献是<strong>双视角分析框架</strong>：
+      ① <strong>Agent 视角</strong>：roles, execution, knowledge, reflection 等通用 agent 设计原则；
+      ② <strong>Data Science 视角</strong>：preprocessing, model development, evaluation, visualization 等 DS workflow 阶段。
+      把"通用 Agent 设计"与"DS 实践流程"打通映射，为该方向提供清晰路线图。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">2 视角</div><div class="label">Agent + DS</div></div>
+      <div class="stat"><div class="value">4 设计原则</div><div class="label">Roles/Exec/Know/Reflect</div></div>
+      <div class="stat"><div class="value">DS Workflow</div><div class="label">全流程映射</div></div>
+      <div class="stat"><div class="value">Roadmap</div><div class="label">研究路线图</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 综述动机</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 LLM agent 综述的不足</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 多数综述偏"通用 Agent"</h4>
+          <p>已有 agent 综述（如 ReAct / AutoGen 类）侧重通用 reasoning + tool use 设计，但 Data Science 工作流有特殊性：长流水线、数据驱动、可验证性强。</p>
+        </div>
+        <div>
+          <h4>② 缺 DS workflow 视角</h4>
+          <p>从 EDA → 特征工程 → 建模 → 评估 → 可视化 → 部署的完整链路，每个阶段对 Agent 能力的诉求不同。</p>
+        </div>
+        <div>
+          <h4>③ 方法对比缺失</h4>
+          <p>Data Interpreter / AgentAda / DS-Agent / TaskWeaver / AutoGen 等系统设计差异在哪？综述需要给出统一坐标系。</p>
+        </div>
+        <div>
+          <h4>④ 评测标准不统一</h4>
+          <p>ML-Benchmark / DABench / KaggleBench / DataSciBench 等评测目标不同，社区缺少 cross-benchmark 视角。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 综述贡献</h3>
+      <p>① 提出"Agent 视角 + DS 视角"双重分析框架；② 综合 review 近年 LLM-based DS Agent 工作；③ 为该方向研究者提供路线图。</p>
+    </div>
+  </section>
+
+  <section class="block alt" id="agent-view">
+    <div class="container" style="padding:0;">
+      <h2>2. Agent 视角：四大设计原则</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Roles（角色）</h3>
+          <ul>
+            <li>单 Agent vs 多 Agent</li>
+            <li>角色分工：Planner / Coder / Critic / Executor</li>
+            <li>典型：MetaGPT 风格的 SOP-based 多角色</li>
+            <li>设计权衡：粒度过细 → 通信成本大；过粗 → 失去专精</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>② Execution（执行）</h3>
+          <ul>
+            <li><strong>Linear ReAct</strong>：思考-工具-观察循环</li>
+            <li><strong>Plan-and-Solve</strong>：先 plan 后逐步执行</li>
+            <li><strong>Hierarchical Graph</strong>（如 Data Interpreter）</li>
+            <li><strong>Tree Search</strong>：MCTS/ToT</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>③ Knowledge（知识）</h3>
+          <ul>
+            <li>静态：prompt few-shot</li>
+            <li>检索：RAG over schema/docs/skill library</li>
+            <li>微调：领域 SFT（如 DB-GPT-Hub）</li>
+            <li>经验：experience library（如 Data Interpreter）</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h3>④ Reflection（反思）</h3>
+          <ul>
+            <li>Self-Correction（DIN-SQL 风格）</li>
+            <li>Execution-grounded（CHESS / MAC-SQL Refiner）</li>
+            <li>Critique Agent（专门评估其它 Agent 输出）</li>
+            <li>Verification 节点（断言/统计检查）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="ds-view">
+    <h2>3. Data Science 视角：workflow 阶段映射</h2>
+
+    <div class="pipeline">
+      <span class="step">📥 Data Loading</span>
+      <span class="arrow">→</span>
+      <span class="step">🔍 EDA</span>
+      <span class="arrow">→</span>
+      <span class="step">🧹 Preprocessing</span>
+      <span class="arrow">→</span>
+      <span class="step">🛠️ Feature Eng.</span>
+      <span class="arrow">→</span>
+      <span class="step">🤖 Model Dev.</span>
+      <span class="arrow">→</span>
+      <span class="step">📊 Eval</span>
+      <span class="arrow">→</span>
+      <span class="step">🎨 Vis</span>
+      <span class="arrow">→</span>
+      <span class="step">📝 Report</span>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:1.5rem;">
+      <div class="card">
+        <h3>每个阶段对 Agent 的特定诉求</h3>
+        <ul>
+          <li><strong>EDA</strong>：数据状态发现 → 需要 plan 动态调整</li>
+          <li><strong>Preprocessing</strong>：处理缺失/异常 → 需要 verification</li>
+          <li><strong>Feature Eng.</strong>：领域知识依赖 → 需要 RAG / skill library</li>
+          <li><strong>Modeling</strong>：方法选择 → AutoML 或 skill matcher</li>
+          <li><strong>Vis & Report</strong>：用户交互 → persona-aware 输出</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>不同 Agent 的覆盖差异</h3>
+        <ul>
+          <li><strong>Data Interpreter</strong>：全流程 + 动态图</li>
+          <li><strong>AgentAda</strong>：偏分析/insight 侧</li>
+          <li><strong>DB-GPT</strong>：偏数据库 NL2SQL + GBI</li>
+          <li><strong>AutoGen / TaskWeaver</strong>：通用框架，DS 是一类应用</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="methods">
+    <div class="container" style="padding:0;">
+      <h2>4. 综述涵盖的代表方法（节选）</h2>
+      <div class="grid grid-3">
+        <div class="card">
+          <h3>Plan / Architecture</h3>
+          <ul>
+            <li>MetaGPT (SOP)</li>
+            <li>Data Interpreter (Hierarchical Graph)</li>
+            <li>AutoGen (Multi-agent)</li>
+            <li>DS-Agent</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Knowledge / Skill</h3>
+          <ul>
+            <li>AgentAda (Skill Library)</li>
+            <li>DB-GPT-Hub (SFT)</li>
+            <li>RAG over schema/docs</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Evaluation</h3>
+          <ul>
+            <li>ML-Benchmark</li>
+            <li>InfiAgent-DABench</li>
+            <li>KaggleBench</li>
+            <li>DataSciBench</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="insights">
+    <h2>5. 综述指出的开放问题</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>🔬 技术挑战</h3>
+        <ul>
+          <li>长流水线错误传递控制</li>
+          <li>跨阶段记忆 / 状态管理</li>
+          <li>Reflection 信号的来源（执行 vs LLM judge）</li>
+          <li>多 Agent 协调成本</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🎯 评测挑战</h3>
+        <ul>
+          <li>缺少跨 benchmark 统一指标</li>
+          <li>insight 质量主观，需要 LLM-judge 与人类对齐</li>
+          <li>真实工业场景的 leakage / 数据分布漂移</li>
+          <li>计算成本评测（token / wall time）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🚀 系统挑战</h3>
+        <ul>
+          <li>私有部署 + 数据安全</li>
+          <li>沙箱执行的安全性</li>
+          <li>用户协作 / 人在回路设计</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🌍 应用方向</h3>
+        <ul>
+          <li>面向非技术用户的 Data Agent UI</li>
+          <li>领域特化 Agent（医疗/金融/制造）</li>
+          <li>可解释 / 可审计的 DS pipeline</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>6. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2508.02744" target="_blank">arXiv:2508.02744</a> (v2, 2025.11)</li>
+      <li>📑 关联综述：Tabular Data Understanding Survey (2508.00217) · Data Agents Levels (2602.04261)</li>
+      <li>📑 关联方法：本论文集中的 Data Interpreter / AgentAda / DB-GPT 都被列为代表工作</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · DS Agent Survey · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

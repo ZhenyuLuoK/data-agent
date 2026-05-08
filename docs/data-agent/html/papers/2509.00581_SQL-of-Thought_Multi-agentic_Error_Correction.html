@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SQL-of-Thought: Multi-agentic Text-to-SQL with Guided Error Correction · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="https://arxiv.org/abs/2509.00581" target="_blank">📄 arXiv</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2509.00581 · 2025.08 (v1) → 2025.09 (v2) · NeurIPS 2025 DL4C Workshop</div>
+    <h1>SQL-of-Thought: Multi-agentic Text-to-SQL with Guided Error Correction</h1>
+    <div class="meta">
+      <span>👥 Saumya Chaturvedi, Aman Chadha, Laurent Bindschaedler</span>
+      <span>🏛️ Amazon / Stanford / MPI-SWS</span>
+      <span>📅 2025.08</span>
+    </div>
+    <p class="tagline">
+      用<strong>多 Agent + Chain-of-Thought + 错误分类法引导的纠错</strong>解决 Text-to-SQL。
+      把任务拆为 5 步：<strong>schema linking → subproblem identification → query plan generation → SQL generation → guided correction loop</strong>。
+      关键创新：<strong>taxonomy-guided dynamic error modification</strong> —— 不再依赖纯执行式静态修正，
+      而是用 in-context learning + 错误分类法引导动态纠错。在 Spider 上达到 SOTA。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">5 步骤</div><div class="label">Multi-Agent 分解</div></div>
+      <div class="stat"><div class="value">Taxonomy</div><div class="label">引导纠错</div></div>
+      <div class="stat"><div class="value">Spider SOTA</div><div class="label">主要 benchmark</div></div>
+      <div class="stat"><div class="value">NeurIPS DL4C</div><div class="label">2025 Workshop 接收</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+
+    <div class="panel-gap">
+      <h3>❌ 现有 NL2SQL 纠错的两条路径都不够</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① 仅依靠 LLM Self-Refine（DIN-SQL 风格）</h4>
+          <p>纯 prompt 让 LLM "自己看再改"，但 LLM 看不到执行结果，无法发现真实错误（列名不存在、类型不匹配）；改起来还经常引入新错。</p>
+        </div>
+        <div>
+          <h4>② 仅依靠静态执行反馈（MAC-SQL Refiner / CHESS）</h4>
+          <p>能拿到执行错误信息，但没有"<strong>对错误做分类</strong>"的能力。同样的"column does not exist"错误，可能是拼写、列归属错表、JOIN 缺失等不同根因，需要不同修复策略。盲目把错误信息扔回 LLM，修复不稳定。</p>
+        </div>
+        <div>
+          <h4>③ 缺乏 query plan 显式化</h4>
+          <p>直接 NL → SQL 一步生成，把"理解题意 + 选 schema + 设计连接 + 写 SQL"压在一个 prompt 里。LLM 在子步骤间出错难以定位。</p>
+        </div>
+        <div>
+          <h4>④ 缺少"如何思考"的指引</h4>
+          <p>CoT prompting 可以让 LLM 多想一步，但缺少结构化的思考骨架（先想什么、再想什么），效果不稳定。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察："<strong>把流程显式化为多 Agent + 用错误分类法引导动态纠错</strong>"</h3>
+      <p>
+        SQL-of-Thought 把 NL2SQL 拆成 5 个明确的 Agent 阶段，每个阶段有专门 prompt + 专门 ICL 示例。
+        关键创新在最后的 <strong>guided correction loop</strong>：
+        预先建立一个 SQL 错误的<strong>taxonomy</strong>（例如：schema linking 错、JOIN 错、聚合错、空值处理错、字面值错……），
+        当执行出错时，先用 LLM 分类错误属于哪一类，再调用对应 ICL 示例做"<strong>有针对性的纠错</strong>"，
+        而不是把错误信息盲扔回 LLM 让其自由发挥。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">NL Question</span>
+      <span class="arrow">→</span>
+      <span class="step">🔗 Schema Linking</span>
+      <span class="arrow">→</span>
+      <span class="step">🧩 Subproblem Identification</span>
+      <span class="arrow">→</span>
+      <span class="step">📋 Query Plan</span>
+      <span class="arrow">→</span>
+      <span class="step">🤖 SQL Generation</span>
+      <span class="arrow">↺</span>
+      <span class="step">📚 Taxonomy-Guided Correction</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：5-Stage Multi-Agent Pipeline</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>① Schema Linking Agent</h3>
+          <p>从大 schema 中筛出与问题相关的表/列子集，类似 RSL-SQL / CHESS Schema Selection。</p>
+          <p>是后续步骤的"必要而精简"输入。</p>
+        </div>
+
+        <div class="card">
+          <h3>② Subproblem Identification Agent</h3>
+          <p>把复杂问题拆分为可独立思考的子问题，例如：</p>
+          <ul>
+            <li>识别问题中包含的聚合需求 / 过滤条件 / JOIN 需求</li>
+            <li>明确每个子目标的 schema 依赖</li>
+          </ul>
+          <p>类似 DIN-SQL 的 difficulty/decomposition 思想，但更细致。</p>
+        </div>
+
+        <div class="card">
+          <h3>③ Query Plan Generation Agent</h3>
+          <p>基于子问题列表，生成<strong>结构化查询计划</strong>：</p>
+          <ul>
+            <li>需要哪些表与列</li>
+            <li>JOIN 关系与顺序</li>
+            <li>聚合 / GROUP BY / HAVING</li>
+            <li>排序 / 限制条件</li>
+          </ul>
+          <p>把"先有 plan 再写 SQL"显式化，类似 CHASE-SQL 的 Query Plan 策略，但作为标准步骤而非可选 prompt 风格。</p>
+        </div>
+
+        <div class="card">
+          <h3>④ SQL Generation Agent</h3>
+          <p>基于精简 schema + query plan 写 SQL。因为前面已经把"理解题意"与"设计 plan"做完，这一步本质是 plan → 代码 的相对机械化翻译，错误率显著降低。</p>
+        </div>
+
+        <div class="card" style="grid-column: span 2;">
+          <h3>⑤ Guided Correction Loop（核心创新）</h3>
+          <p>当 SQL 执行错误或结果不符预期时：</p>
+          <ol>
+            <li><strong>错误分类</strong>：用 LLM 把错误归到预定义 taxonomy 的某一类（schema 错 / 聚合错 / JOIN 错 / 字面值错 / NULL 处理错…）</li>
+            <li><strong>针对性 ICL</strong>：根据错误类别检索对应 ICL 示例（每类有专门的"如何修这种错"示例集）</li>
+            <li><strong>动态修正</strong>：把错误信息 + 类别 + 针对性示例一起喂回 SQL Generation Agent，得到修正版</li>
+            <li>循环直至执行通过或预算耗尽</li>
+          </ol>
+          <p>论文强调："<strong>taxonomy-guided dynamic</strong> error modification informed by in-context learning" —— 与<em>静态执行反馈</em>形成对比，是该论文的核心差异化贡献。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：让"<strong>思考过程</strong>"显式化（5 个 Agent 各司其职），让"<strong>纠错过程</strong>"也显式化（错误分类 + 针对性示例）。
+        这条路线与 SQL-Trail（多轮 RL）形成有意思的对比 —— SQL-Trail 让模型隐式学会交互行为，SQL-of-Thought 把行为模式显式编码进多 Agent + taxonomy。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li><strong>Spider</strong>：跨域 NL2SQL 经典基准（论文主战场）</li>
+          <li>Spider variants（论文 abstract 提到 "Spider dataset and its variants"）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>纯执行反馈静态修正（MAC-SQL Refiner 风格）</li>
+          <li>纯 self-refine 无 taxonomy（DIN-SQL Self-Correction 风格）</li>
+          <li>End-to-end NL → SQL 单步 prompting</li>
+          <li>同期 multi-agent 方法</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">Spider 主结果</div>
+          <div class="value">SOTA</div>
+          <div class="bar"><div style="width:90%;"></div></div>
+          <div class="delta up">论文 abstract 明确</div>
+        </div>
+        <div class="metric">
+          <div class="label">vs 静态执行修正</div>
+          <div class="value">↑</div>
+          <div class="bar"><div style="width:75%;"></div></div>
+          <div class="delta up">taxonomy-guided 优于盲修</div>
+        </div>
+        <div class="metric">
+          <div class="label">流程显式化收益</div>
+          <div class="value">5 Stages</div>
+          <div class="bar"><div style="width:80%;"></div></div>
+          <div class="delta up">多 Agent &gt; 单 Agent</div>
+        </div>
+      </div>
+
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：SQL-of-Thought 论文 abstract（<a href="https://arxiv.org/abs/2509.00581" target="_blank">arXiv:2509.00581 v2</a>）。原文："SQL-of-Thought achieves state-of-the-art results on the Spider dataset and its variants, combining guided error taxonomy with reasoning-based query planning." 具体 EX 数字详见论文 Table。</p>
+
+      <h3>关键发现</h3>
+      <ul>
+        <li><strong>Taxonomy-guided 优于纯执行式</strong>：错误分类带来更稳定的纠错</li>
+        <li><strong>显式 query plan 阶段</strong>有效：在 SQL generation 前先把 plan 写下来减少错误</li>
+        <li><strong>multi-agent 分工</strong>降低单 prompt 复杂度，每个 Agent 只关心一件事</li>
+        <li><strong>guided correction loop</strong>对修复"语义对但执行错"的 SQL 特别有效</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. Taxonomy 覆盖的失败模式</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于 SQL-of-Thought 论文的 guided correction loop 设计动机。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">类型 1: Schema Linking 错</button>
+      <button class="tab-btn" data-tab="c2">类型 2: 聚合 / GROUP BY 错</button>
+      <button class="tab-btn" data-tab="c3">类型 3: 字面值 / NULL 错</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>列名 / 表归属错</h4>
+      <p>典型错误信息：<code>column "X" does not exist</code> 或 <code>ambiguous column name</code>。</p>
+      <p>SQL-of-Thought 的处理：</p>
+      <ul>
+        <li>分类为 "Schema Linking Error"；</li>
+        <li>检索此类专门 ICL 示例（演示如何修拼写、如何指定表前缀、如何重新做 schema linking）；</li>
+        <li>把示例 + 错误信息 + 候选 schema 重新喂回 SQL Generation Agent。</li>
+      </ul>
+      <p>对比纯执行反馈：盲扔错误信息可能让 LLM 改错列、改坏 SQL。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>聚合粒度 / GROUP BY 错</h4>
+      <p>典型错误：<code>column must appear in GROUP BY</code> 或 SQL 执行通过但语义错（漏 GROUP BY 列、聚合错列）。</p>
+      <p>处理：</p>
+      <ul>
+        <li>分类为 "Aggregation Error"；</li>
+        <li>对应示例展示如何识别需要聚合的列与分组键；</li>
+        <li>修正版补齐 GROUP BY / 改聚合函数。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>字面值 / NULL 处理错</h4>
+      <p>典型错误：<code>WHERE x = '某值'</code> 但 DB 内字面值大小写或拼写不同；或忘记 <code>IS NOT NULL</code>。</p>
+      <p>处理：</p>
+      <ul>
+        <li>分类为 "Literal Value Error" / "NULL Handling Error"；</li>
+        <li>对应示例展示如何用 <code>LIKE</code>、<code>LOWER()</code>、<code>IS NOT NULL</code> 等修复；</li>
+        <li>对比 CHESS 的 LSH 字面值匹配 —— SQL-of-Thought 在生成时不一定有 LSH，但通过执行 + taxonomy 在<em>纠错阶段</em>解决同类问题。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>错误也要分类</strong>，不能盲修</li>
+            <li>把"思考过程"显式拆分为 Agent 链</li>
+            <li>Plan-then-write 比 一步到位 更可控</li>
+            <li>ICL 示例可以按错误类别细分库管理</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>NL2SQL 错误 taxonomy 的工程化构建</li>
+            <li>Guided correction loop 范式</li>
+            <li>5-stage multi-agent 设计模式</li>
+            <li>NeurIPS 2025 DL4C 工作坊接收</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 实践影响</h3>
+          <ul>
+            <li>对工业级 NL2SQL 错误分析提供方法论参考</li>
+            <li>可与 CHESS / MAC-SQL Refiner 集成 —— 用 taxonomy 引导 Refiner</li>
+            <li>启发后续 PV-SQL 等工作（数据库 probe + rule-based verification）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>Taxonomy 需要人工策划，覆盖不全时有 fallback 问题</li>
+            <li>对每类错误维护 ICL 示例库的维护成本不低</li>
+            <li>论文主要在 Spider 上验证，BIRD / Spider 2.0 等更难 benchmark 上表现需进一步看</li>
+            <li>多 Agent 链式调用的 token 成本明显高于单步生成</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2509.00581" target="_blank">arXiv:2509.00581</a></li>
+      <li>🎓 接收：NeurIPS 2025 DL4C "Deep Learning for Code" Workshop</li>
+      <li>📑 关联工作：DIN-SQL（Self-Correction）· MAC-SQL（Refiner）· CHESS（执行反馈）· PV-SQL（probe + verify）</li>
+      <li>🔗 与本论文集其他工作的关系：与 SQL-Trail 形成"显式 vs 隐式"路线对比</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · SQL-of-Thought · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>

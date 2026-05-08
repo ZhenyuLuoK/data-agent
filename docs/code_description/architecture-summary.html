@@ -1,0 +1,1279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>boost-agent 架构总结 · KDD Cup 2026 DataAgent-Bench</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        html { scroll-behavior: smooth; }
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        code, pre { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+        .gradient-hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .gradient-text { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .nav-link.active { color: #667eea; font-weight: 600; }
+        .tab-btn.active { background: #667eea; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn .3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .expandable-content { display: none; }
+        .expandable.open .expandable-content { display: block; animation: fadeIn .25s ease-in; }
+        .expandable .arrow { transition: transform .2s; }
+        .expandable.open .arrow { transform: rotate(180deg); }
+        details > summary { list-style: none; cursor: pointer; }
+        details > summary::-webkit-details-marker { display: none; }
+        .arch-ascii { font-family: 'JetBrains Mono', monospace; white-space: pre; line-height: 1.4; font-size: 12px; }
+        .progress-bar { transition: width 1.2s ease-out; }
+        .card-hover { transition: transform .2s, box-shadow .2s; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 30px -10px rgba(102, 126, 234, .35); }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+<!-- ============================================================ -->
+<!-- Top Navigation                                                -->
+<!-- ============================================================ -->
+<nav class="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg gradient-hero flex items-center justify-center text-white font-bold">B</div>
+            <span class="font-bold text-lg">boost-agent</span>
+            <span class="text-xs text-gray-500 hidden md:inline">· Architecture Summary</span>
+        </div>
+        <div class="hidden lg:flex items-center gap-6 text-sm text-gray-600">
+            <a href="#hero" class="nav-link hover:text-indigo-600">概览</a>
+            <a href="#problem" class="nav-link hover:text-indigo-600">问题与洞察</a>
+            <a href="#methodology" class="nav-link hover:text-indigo-600">方法论</a>
+            <a href="#evaluation" class="nav-link hover:text-indigo-600">评测</a>
+            <a href="#cases" class="nav-link hover:text-indigo-600">案例</a>
+            <a href="#insights" class="nav-link hover:text-indigo-600">洞察</a>
+        </div>
+        <a href="architecture.md" class="hidden md:inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full border border-gray-300 hover:border-indigo-500 hover:text-indigo-600">
+            📄 原始文档
+        </a>
+    </div>
+</nav>
+
+<!-- ============================================================ -->
+<!-- 1. Hero Section                                               -->
+<!-- ============================================================ -->
+<section id="hero" class="gradient-hero text-white">
+    <div class="max-w-7xl mx-auto px-6 py-20">
+        <div class="flex flex-wrap items-center gap-3 text-xs mb-4">
+            <span class="px-3 py-1 bg-white/20 backdrop-blur rounded-full">📐 Architecture Summary</span>
+            <span class="px-3 py-1 bg-white/20 backdrop-blur rounded-full">🤖 LangGraph DAG Agent</span>
+            <span class="px-3 py-1 bg-white/20 backdrop-blur rounded-full">🏆 KDD Cup 2026</span>
+            <span class="px-3 py-1 bg-white/20 backdrop-blur rounded-full">2026-05</span>
+        </div>
+        <h1 class="text-4xl md:text-6xl font-extrabold leading-tight mb-4">
+            boost-agent: <br class="md:hidden" />
+            <span class="text-yellow-300">DAG 编排</span> · <span class="text-emerald-300">多轮投票</span> · <span class="text-pink-300">失败自愈</span>
+        </h1>
+        <p class="text-lg md:text-xl text-white/90 max-w-4xl mb-8 leading-relaxed">
+            DataAgent-Bench Starter Kit 之上的深度改造：把传统单循环 ReAct 替换为
+            <span class="font-semibold text-yellow-300">9 节点 LangGraph DAG</span>，叠加
+            <span class="font-semibold text-emerald-300">3 轮签名投票</span> +
+            <span class="font-semibold text-pink-300">Retry pass</span> +
+            <span class="font-semibold">5 秒后台同步守护</span>，
+            在 KDD Cup 2026 评测约束下把"模型随机性"挤压成可投票的稳定输出。
+        </p>
+
+        <!-- Key Stats Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-10">
+            <div class="bg-white/10 backdrop-blur rounded-xl p-5 border border-white/20">
+                <div class="text-3xl md:text-4xl font-bold text-yellow-300">9</div>
+                <div class="text-sm text-white/80 mt-1">LangGraph 节点</div>
+                <div class="text-xs text-white/60">planner · scheduler · executor · ...</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-xl p-5 border border-white/20">
+                <div class="text-3xl md:text-4xl font-bold text-emerald-300">12</div>
+                <div class="text-sm text-white/80 mt-1">LangChain 工具</div>
+                <div class="text-xs text-white/60">含 read_doc 三模式 / answer / mark_node_done</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-xl p-5 border border-white/20">
+                <div class="text-3xl md:text-4xl font-bold text-pink-300">3</div>
+                <div class="text-sm text-white/80 mt-1">投票轮数</div>
+                <div class="text-xs text-white/60">prediction.csv + r2.csv + r3.csv</div>
+            </div>
+            <div class="bg-white/10 backdrop-blur rounded-xl p-5 border border-white/20">
+                <div class="text-3xl md:text-4xl font-bold text-white">36s</div>
+                <div class="text-sm text-white/80 mt-1">单 task P50 耗时</div>
+                <div class="text-xs text-white/60">P75=67s · P95≈356s</div>
+            </div>
+        </div>
+
+        <!-- Tech Stack pills -->
+        <div class="mt-10 flex flex-wrap gap-2 text-xs">
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">langgraph</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">langchain-openai</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">typer + rich</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">pydantic v2</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">duckdb / polars / pandas</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">multiprocessing</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">uv + hatchling</span>
+            <span class="px-3 py-1.5 bg-white/15 rounded-full">Docker</span>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2. Problem & Insight                                          -->
+<!-- ============================================================ -->
+<section id="problem" class="py-20 bg-white">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Problem &amp; Insight</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">为什么是 DAG + 投票，而不是更大的 ReAct？</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">从评测约束反推，单一 ReAct 循环在三条曲线上同时输给了多节点 + 多候选架构。</p>
+        </div>
+
+        <!-- 三个评测约束 -->
+        <div class="grid md:grid-cols-3 gap-5 mb-12">
+            <div class="bg-gradient-to-br from-slate-50 to-gray-100 rounded-xl p-6 border border-gray-200 card-hover">
+                <div class="text-2xl mb-2">⏱️</div>
+                <h4 class="font-bold mb-1">硬性时间窗</h4>
+                <p class="text-sm text-gray-600">A 榜 <span class="font-mono">7200s</span> · B 榜 <span class="font-mono">12h</span>，外层 <span class="font-mono">timeout --kill-after=30s</span>，超时直接 SIGKILL。</p>
+            </div>
+            <div class="bg-gradient-to-br from-slate-50 to-gray-100 rounded-xl p-6 border border-gray-200 card-hover">
+                <div class="text-2xl mb-2">📐</div>
+                <h4 class="font-bold mb-1">列签名 + 冗余惩罚</h4>
+                <p class="text-sm text-gray-600">评分 <span class="font-mono">Score = max(0, Recall − 0.5·extra/predicted)</span>。多一列就扣 0.5/N，正确答案 +1 列也只剩 0.5。</p>
+            </div>
+            <div class="bg-gradient-to-br from-slate-50 to-gray-100 rounded-xl p-6 border border-gray-200 card-hover">
+                <div class="text-2xl mb-2">🚫</div>
+                <h4 class="font-bold mb-1">禁止运行期联网</h4>
+                <p class="text-sm text-gray-600">除调用 <span class="font-mono">MODEL_API_URL</span> 外不得联网，API key 必须从 <span class="font-mono">${"{"}VAR{"}"}</span> 注入，硬编码即违规。</p>
+            </div>
+        </div>
+
+        <!-- The Gap -->
+        <div class="bg-gradient-to-r from-red-50 to-orange-50 rounded-2xl p-8 mb-6 border-l-4 border-red-500">
+            <h3 class="text-xl font-bold text-red-700 mb-4 flex items-center gap-2">❌ Naive ReAct 在这套约束下的三个崩溃模式</h3>
+            <div class="grid md:grid-cols-3 gap-6">
+                <div>
+                    <h4 class="font-semibold mb-2 text-red-800">长上下文迷失</h4>
+                    <p class="text-sm text-gray-700">Step 20+ 后模型反复 <span class="font-mono">read_doc</span> 同一文件、忘记已读结果。task_344/352/418 都因此把 step 预算耗光。</p>
+                </div>
+                <div>
+                    <h4 class="font-semibold mb-2 text-red-800">幻觉路径</h4>
+                    <p class="text-sm text-gray-700">~80% 的失败是模型猜路径——题里有 sqlite，模型去读 <span class="font-mono">data.db</span>，但实际只有 <span class="font-mono">db/main.sqlite</span>，连环 FileNotFoundError。</p>
+                </div>
+                <div>
+                    <h4 class="font-semibold mb-2 text-red-800">单次随机性</h4>
+                    <p class="text-sm text-gray-700"><span class="font-mono">temperature=0.5</span> 仍偶发抽风：分组遗漏、列名漂移、整数当浮点。一次抽样就交卷 = 把概率全押一个回合。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- The Insight -->
+        <div class="bg-gradient-to-r from-green-50 to-teal-50 rounded-2xl p-8 mb-10 border-l-4 border-emerald-500">
+            <h3 class="text-xl font-bold text-emerald-700 mb-4 flex items-center gap-2">✅ 三层组合拳：每一层都精准击中一种崩溃</h3>
+            <div class="grid md:grid-cols-3 gap-5">
+                <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                    <div class="text-3xl mb-2">🧩</div>
+                    <h4 class="font-bold mb-1 text-emerald-700">DAG 切分 + 焦点提示</h4>
+                    <p class="text-sm text-gray-700">planner 把任务拆成 2-6 节点；executor 一次只看 <span class="font-semibold">当前节点 goal + 上游 1-3 句 summary</span>，把上下文从"几十轮日志"压缩到"几百字符"。</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                    <div class="text-3xl mb-2">🛡️</div>
+                    <h4 class="font-bold mb-1 text-emerald-700">Dataset Profile 强约束</h4>
+                    <p class="text-sm text-gray-700">planner 调用前注入<span class="font-semibold">真实文件清单 + sqlite schema + json/csv head</span>，prompt 强制"只引用 profile 里的文件"，幻觉路径直接归零。</p>
+                </div>
+                <div class="bg-white rounded-xl p-5 shadow-sm card-hover">
+                    <div class="text-3xl mb-2">🎲</div>
+                    <h4 class="font-bold mb-1 text-emerald-700">多候选签名投票</h4>
+                    <p class="text-sm text-gray-700">同一题跑 3 轮 → 列签名规范化 → 多数票胜出。把"单次抽样"换成"3 次独立 i.i.d 实验"，正确率随轮数指数级靠近 1。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logic Pipeline -->
+        <h3 class="text-2xl font-bold text-center mb-6">逻辑流水线</h3>
+        <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+            <div class="flex flex-col md:flex-row gap-3 items-stretch text-center text-sm">
+                <div class="flex-1 bg-red-50 border border-red-200 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-red-600 mb-1">Current</div>
+                    <div class="font-bold text-red-800">单循环 ReAct</div>
+                    <div class="text-xs text-gray-600 mt-1">长上下文迷失<br />单次抽样<br />幻觉路径</div>
+                </div>
+                <div class="hidden md:flex items-center text-2xl text-gray-400">→</div>
+                <div class="flex-1 bg-orange-50 border border-orange-200 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-orange-600 mb-1">Gap</div>
+                    <div class="font-bold text-orange-800">评测约束</div>
+                    <div class="text-xs text-gray-600 mt-1">7200s 硬切<br />列签名 + 惩罚<br />无网</div>
+                </div>
+                <div class="hidden md:flex items-center text-2xl text-gray-400">→</div>
+                <div class="flex-1 bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-indigo-600 mb-1">Insight</div>
+                    <div class="font-bold text-indigo-800">DAG + 投票 + 自愈</div>
+                    <div class="text-xs text-gray-600 mt-1">短焦点上下文<br />多候选鲁棒<br />层层兜底</div>
+                </div>
+                <div class="hidden md:flex items-center text-2xl text-gray-400">→</div>
+                <div class="flex-1 bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-emerald-600 mb-1">Solution</div>
+                    <div class="font-bold text-emerald-800">9 节点 + 3 轮 + Retry</div>
+                    <div class="text-xs text-gray-600 mt-1">LangGraph<br />vote_all_tasks<br />retry_pass</div>
+                </div>
+                <div class="hidden md:flex items-center text-2xl text-gray-400">→</div>
+                <div class="flex-1 bg-purple-50 border border-purple-200 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-purple-600 mb-1">Impact</div>
+                    <div class="font-bold text-purple-800">高完成率 + 抗截断</div>
+                    <div class="text-xs text-gray-600 mt-1">5s 同步守护<br />任意阶段 SIGKILL<br />均有保底答案</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3. Methodology                                                -->
+<!-- ============================================================ -->
+<section id="methodology" class="py-20 bg-gray-50">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Methodology</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">技术方法论</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">从 entrypoint 到 LangGraph，从工具层到评分公式，每一层都有明确的职责边界。</p>
+        </div>
+
+        <!-- 顶层架构图 -->
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-12">
+            <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-3 flex items-center justify-between">
+                <span class="font-semibold">📊 顶层架构图</span>
+                <span class="text-xs opacity-80">评测平台 → 容器 → CLI → Runner → LangGraph</span>
+            </div>
+            <pre class="arch-ascii bg-gray-900 text-gray-100 px-6 py-5 overflow-x-auto"><code>┌─────────────────────────── 评测平台 ───────────────────────────┐
+│ docker run + 挂 /input /output + 注入 MODEL_API_URL/KEY/NAME    │
+│ 外层 timeout --kill-after=30s ${MAX_RUNTIME_SECONDS}s           │
+└────────────────────────────┬────────────────────────────────────┘
+                             ▼
+                  /app/entrypoint.sh
+                  ├─ 后台 (sleep 5; sync) &  ← 5s 把 prediction.csv
+                  │                            从 run_id 子目录拍平到 /output/task_*
+                  └─ exec dabench run-benchmark --config submit.yaml
+                             │
+                             ▼
+                  CLI · Config · Dataset
+                  ├ load_app_config()  → ${"{"}VAR:-default{"}"} 展开
+                  └ DABenchPublicDataset(/input).iter_tasks()
+                             │
+                             ▼
+   ┌────────────── Runner (run/runner.py) ──────────────────────┐
+   │  for round in 1..vote_rounds(=3):                          │
+   │     ThreadPoolExecutor(max_workers=2)                      │
+   │       └─ run_single_task → multiprocessing.Process         │
+   │                              + 600s 硬 timeout             │
+   │                              └─ LangGraphAgent.run(task)   │
+   │     _round_artifact_filename:                              │
+   │       round=1 → prediction.csv                             │
+   │       round≥2 + base 已存在 → rN.csv                       │
+   │       round≥2 + base 不存在 → prediction.csv (back-fill)   │
+   │  _execute_retry_pass()  ← still-failed task 再跑 1 次      │
+   │  vote_all_tasks(run_dir) ← 多数 / earliest 投票             │
+   │  normalize_prediction_csv(prediction.csv)                  │
+   └────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+              artifacts/runs/&lt;run_id&gt;/task_&lt;id&gt;/
+                ├── prediction.csv  ← 评测系统读这个
+                ├── trace.json / r2.csv / r3.csv / dag.svg
+                └── summary.json + vote_summary.json</code></pre>
+        </div>
+
+        <!-- LangGraph 9 节点 -->
+        <h3 class="text-2xl font-bold mb-2">🧠 LangGraph DAG 流水线（9 节点）</h3>
+        <p class="text-gray-600 mb-6 text-sm">每个节点的职责在 <span class="font-mono">_build_graph()</span> 内通过 <span class="font-mono">StateGraph(AgentState)</span> 拼接。条件路由由 9 个 <span class="font-mono">route_after_*</span> 函数控制。</p>
+        <div class="grid md:grid-cols-3 gap-4 mb-12">
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">1</span>
+                    <h4 class="font-bold">planner</h4>
+                </div>
+                <p class="text-xs text-gray-600">注入 <span class="font-mono">_build_dataset_profile</span> 真实文件清单，输出 2-6 节点 JSON DAG。每 task 仅 1 次（除非 replan）。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">2</span>
+                    <h4 class="font-bold">replanner</h4>
+                </div>
+                <p class="text-xs text-gray-600">scheduler 卡住或节点 attempts 用尽时触发，吃失败原因重画 DAG。<span class="font-mono">max_replans=2</span>。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">3</span>
+                    <h4 class="font-bold">dag_scheduler</h4>
+                </div>
+                <p class="text-xs text-gray-600">drain 完成信号 → 选 ready 节点 → 注入 focused prompt（goal + 上游 summaries）。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">4</span>
+                    <h4 class="font-bold">executor</h4>
+                </div>
+                <p class="text-xs text-gray-600">ChatOpenAI + bind_tools。三层保护：<span class="font-mono">identical args</span> 检测 / <span class="font-mono">read_doc</span> 过用检测 / 步预算软警告。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">5</span>
+                    <h4 class="font-bold">tools (ToolNode)</h4>
+                </div>
+                <p class="text-xs text-gray-600">LangGraph 标准节点。错误以 <span class="font-mono">{"{type(exc).__name__}: {exc}"}</span> 透传，让模型自我修正。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">6</span>
+                    <h4 class="font-bold">nudge</h4>
+                </div>
+                <p class="text-xs text-gray-600">executor 空响应（Qwen 偶发）时注入"请继续"提示。<span class="font-mono">max_idle_nudges=2</span>。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">7</span>
+                    <h4 class="font-bold">node_failure</h4>
+                </div>
+                <p class="text-xs text-gray-600">节点 step 用尽时增 attempts；未到上限软重试，到上限 mark failed 并触发 replan。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">8</span>
+                    <h4 class="font-bold">reflector</h4>
+                </div>
+                <p class="text-xs text-gray-600">校验 <span class="font-mono">answer</span> 表的列数、行数、聚合是否匹配题面。输出 <span class="font-mono">OK</span> 或 <span class="font-mono">RETRY: ...</span>。</p>
+            </div>
+            <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">9</span>
+                    <h4 class="font-bold">finalize</h4>
+                </div>
+                <p class="text-xs text-gray-600">空节点占位，存在的意义只是接 <span class="font-mono">add_edge("finalize", END)</span>。</p>
+            </div>
+        </div>
+
+        <!-- 状态共享 -->
+        <details class="bg-white rounded-2xl border border-gray-200 p-6 mb-12 group">
+            <summary class="font-bold flex items-center justify-between">
+                <span>🔗 共享状态：AgentState + ToolRunContext（点击展开）</span>
+                <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+            </summary>
+            <div class="mt-4 grid md:grid-cols-2 gap-6">
+                <div>
+                    <h5 class="font-semibold mb-2 text-sm">AgentState (TypedDict)</h5>
+                    <pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">class AgentState(TypedDict, total=False):
+    messages: Annotated[list[BaseMessage], add_messages]
+    reflections_used: int
+    idle_nudges_used: int
+    steps_in_current_node: int       # 单节点 LLM 回合数
+    pending_replan_reason: str | None
+    finalized: bool
+    failure_reason: str | None</code></pre>
+                </div>
+                <div>
+                    <h5 class="font-semibold mb-2 text-sm">ToolRunContext (侧通道，每个 task 一份)</h5>
+                    <pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">@dataclass(slots=True)
+class ToolRunContext:
+    dag_state: DAGState               # dag / node_status /
+                                      # node_outputs / events
+    final_answer: AnswerTable | None
+    submitted_answers: list[AnswerTable]
+    pending_node_done_signals: list[dict]</code></pre>
+                </div>
+            </div>
+            <p class="mt-4 text-sm text-gray-600">为什么需要侧通道：LangGraph 的 <span class="font-mono">ToolNode</span> 内部副作用只能通过返回值进入状态。<span class="font-mono">mark_node_done / answer</span> 这类控制流工具要写 DAG 状态、最终答案，单靠 <span class="font-mono">messages</span> 表达不下。</p>
+        </details>
+
+        <!-- 工具层 12 工具 -->
+        <h3 class="text-2xl font-bold mb-2">🛠️ 工具层（12 个 LangChain StructuredTool）</h3>
+        <p class="text-gray-600 mb-4 text-sm">分四类：<span class="font-semibold">文件浏览</span> / <span class="font-semibold">数据探索</span> / <span class="font-semibold">计算</span> / <span class="font-semibold">控制流</span>。所有 <span class="font-mono">path</span> 参数都相对 <span class="font-mono">task.context_dir</span>，由 <span class="font-mono">resolve_context_path</span> 兜底防止路径逃逸。</p>
+        <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-100 text-gray-700">
+                    <tr>
+                        <th class="px-4 py-3 text-left">类别</th>
+                        <th class="px-4 py-3 text-left">工具</th>
+                        <th class="px-4 py-3 text-left">关键入参</th>
+                        <th class="px-4 py-3 text-left">用途</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">文件</span></td>
+                        <td class="px-4 py-3 font-mono">list_context</td>
+                        <td class="px-4 py-3 font-mono text-xs">max_depth</td>
+                        <td class="px-4 py-3 text-gray-600">递归列 context/，depth 默认 4</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">文件</span></td>
+                        <td class="px-4 py-3 font-mono">glob_files</td>
+                        <td class="px-4 py-3 font-mono text-xs">pattern, sort_by, limit</td>
+                        <td class="px-4 py-3 text-gray-600">替代 <span class="font-mono">os.listdir</span>，按 name/size/mtime 排序</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">文件</span></td>
+                        <td class="px-4 py-3 font-mono">read_csv</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, max_rows=50</td>
+                        <td class="px-4 py-3 text-gray-600">CSV 预览，header + N 行</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">文件</span></td>
+                        <td class="px-4 py-3 font-mono">read_json</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, max_chars=4000</td>
+                        <td class="px-4 py-3 text-gray-600">JSON pretty-print 头部</td>
+                    </tr>
+                    <tr class="bg-yellow-50">
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">文件</span></td>
+                        <td class="px-4 py-3 font-mono">read_doc ⭐</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, offset, grep, ...</td>
+                        <td class="px-4 py-3 text-gray-600">三模式：<span class="font-semibold">full</span>(≤32KB) / <span class="font-semibold">slice</span>(分页) / <span class="font-semibold">grep</span>(正则跳转)</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs">探索</span></td>
+                        <td class="px-4 py-3 font-mono">inspect_sqlite_schema</td>
+                        <td class="px-4 py-3 font-mono text-xs">path</td>
+                        <td class="px-4 py-3 text-gray-600">SQLite 表 + CREATE TABLE 原文</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-xs">探索</span></td>
+                        <td class="px-4 py-3 font-mono">inspect_data</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, table?, sample_size</td>
+                        <td class="px-4 py-3 text-gray-600">列画像（dtype/null/unique/min/max/samples）</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">计算</span></td>
+                        <td class="px-4 py-3 font-mono">execute_context_sql</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, sql, limit=200</td>
+                        <td class="px-4 py-3 text-gray-600">只读 SQL 跑在 SQLite/db 上</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">计算</span></td>
+                        <td class="px-4 py-3 font-mono">query_dataframe</td>
+                        <td class="px-4 py-3 font-mono text-xs">path, sql, table_alias</td>
+                        <td class="px-4 py-3 text-gray-600">CSV/Parquet/JSON → 内存 SQLite + SQL</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs">计算</span></td>
+                        <td class="px-4 py-3 font-mono">execute_python</td>
+                        <td class="px-4 py-3 font-mono text-xs">code</td>
+                        <td class="px-4 py-3 text-gray-600">子进程 + 30s 硬 timeout，cwd=context</td>
+                    </tr>
+                    <tr class="bg-pink-50">
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 text-xs">控制流</span></td>
+                        <td class="px-4 py-3 font-mono">mark_node_done ⭐</td>
+                        <td class="px-4 py-3 font-mono text-xs">node_id, output_summary</td>
+                        <td class="px-4 py-3 text-gray-600">节点完成信号；写 DAG 状态触发 scheduler</td>
+                    </tr>
+                    <tr class="bg-pink-50">
+                        <td class="px-4 py-3"><span class="px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 text-xs">控制流</span></td>
+                        <td class="px-4 py-3 font-mono">answer ⭐</td>
+                        <td class="px-4 py-3 font-mono text-xs">columns, rows</td>
+                        <td class="px-4 py-3 text-gray-600">最终答案（仅终节点调用）；进入 reflector</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4. Evaluation Framework                                       -->
+<!-- ============================================================ -->
+<section id="evaluation" class="py-20 bg-white">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Evaluation Framework</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">三层评测/兜底框架</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">从 LLM 单次调用到整轮 benchmark，每一层都有独立的失败保护机制。</p>
+        </div>
+
+        <!-- Three-Layer Structure -->
+        <div class="grid md:grid-cols-3 gap-5 mb-14">
+            <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100 card-hover">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold">L1</span>
+                    <h3 class="font-bold text-lg">Fundamental — LLM 调用层</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-2">
+                    <li>• <span class="font-mono">_invoke_with_retry(label=...)</span> 差异化 retry profile</li>
+                    <li>• 客户端 Timeout 一律不重试</li>
+                    <li>• 429 优先读 <span class="font-mono">Retry-After</span> 头</li>
+                    <li>• 指数退避 + full jitter</li>
+                    <li>• <span class="font-mono">ChatOpenAI(max_retries=0, timeout=30)</span></li>
+                </ul>
+            </div>
+            <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-100 card-hover">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-9 h-9 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold">L2</span>
+                    <h3 class="font-bold text-lg">Specialized — Agent 节点层</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-2">
+                    <li>• <span class="font-mono">max_steps_per_node</span> 单节点 step 上限</li>
+                    <li>• <span class="font-mono">max_node_attempts</span> 节点软重试</li>
+                    <li>• <span class="font-mono">max_replans</span> 计划级重画</li>
+                    <li>• <span class="font-mono">max_idle_nudges</span> 空响应救援</li>
+                    <li>• <span class="font-mono">max_reflections</span> 答案重提交</li>
+                </ul>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-6 border border-emerald-100 card-hover">
+                <div class="flex items-center gap-2 mb-3">
+                    <span class="w-9 h-9 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold">L3</span>
+                    <h3 class="font-bold text-lg">Real-World — Benchmark 层</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-2">
+                    <li>• <span class="font-mono">task_timeout_seconds=600</span> 子进程硬切</li>
+                    <li>• <span class="font-mono">vote_rounds=3</span> 多候选投票</li>
+                    <li>• Retry pass 失败任务再跑一次</li>
+                    <li>• <span class="font-mono">vote_all_tasks</span> 末尾签名仲裁</li>
+                    <li>• <span class="font-mono">normalize_prediction_csv</span> 落盘前规范化</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 投票协议详细 -->
+        <h3 class="text-2xl font-bold mb-2">🎲 多轮签名投票协议</h3>
+        <p class="text-gray-600 mb-6 text-sm">核心算法在 <span class="font-mono">run/vote.py:vote_task_with_candidates</span>。投票按 <span class="font-semibold">候选优先级</span>（prediction.csv → r2.csv → r3.csv → ...）解析签名，按规则裁决。</p>
+        <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm mb-12">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-100 text-gray-700">
+                    <tr>
+                        <th class="px-4 py-3 text-left">规则</th>
+                        <th class="px-4 py-3 text-left">触发条件</th>
+                        <th class="px-4 py-3 text-left">胜者</th>
+                        <th class="px-4 py-3 text-left">overwrite prediction.csv？</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr>
+                        <td class="px-4 py-3 font-mono text-xs">no_candidates</td>
+                        <td class="px-4 py-3 text-gray-600">所有候选都无法解析</td>
+                        <td class="px-4 py-3">—</td>
+                        <td class="px-4 py-3">否</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3 font-mono text-xs">single_candidate</td>
+                        <td class="px-4 py-3 text-gray-600">只有 1 个可解析</td>
+                        <td class="px-4 py-3">earliest 可解析</td>
+                        <td class="px-4 py-3">仅当胜者非 prediction.csv 才覆盖</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3 font-mono text-xs">two_candidates</td>
+                        <td class="px-4 py-3 text-gray-600">恰好 2 个可解析</td>
+                        <td class="px-4 py-3">earliest 可解析（不投票）</td>
+                        <td class="px-4 py-3">同上</td>
+                    </tr>
+                    <tr class="bg-emerald-50">
+                        <td class="px-4 py-3 font-mono text-xs">majority ⭐</td>
+                        <td class="px-4 py-3 text-gray-600">≥3 候选 + 某签名出现 ≥2 次</td>
+                        <td class="px-4 py-3 font-semibold">第一个等于多数签名的候选</td>
+                        <td class="px-4 py-3">是（atomic replace）</td>
+                    </tr>
+                    <tr class="bg-amber-50">
+                        <td class="px-4 py-3 font-mono text-xs">all_different</td>
+                        <td class="px-4 py-3 text-gray-600">≥3 候选 + 全部签名互不相同</td>
+                        <td class="px-4 py-3 font-semibold">earliest 候选（=prediction.csv）</td>
+                        <td class="px-4 py-3">否</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 表签名规范化 -->
+        <h3 class="text-2xl font-bold mb-2">📐 表签名规范化（投票域）</h3>
+        <p class="text-gray-600 mb-4 text-sm">两份答案签名相等 ⟺ 列签名匹配评分时得到相同结果。<span class="font-mono">compute_table_signature</span> 同时忽略列名/列顺序/行顺序。</p>
+        <div class="grid md:grid-cols-2 gap-6 mb-12">
+            <div>
+                <pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">def compute_table_signature(columns, rows):
+    per_column = []
+    for col_index in range(len(columns)):
+        cells = [normalize_cell(row[col_index])
+                 for row in rows]
+        per_column.append(tuple(sorted(cells)))   # 行无序
+    return tuple(sorted(per_column))               # 列无序</code></pre>
+            </div>
+            <div>
+                <h4 class="font-semibold mb-2 text-sm"><span class="font-mono">normalize_cell</span> 7 步优先级</h4>
+                <ol class="text-sm text-gray-700 space-y-1 list-decimal list-inside">
+                    <li><span class="font-mono">None</span> / <span class="font-mono">"null"</span> / <span class="font-mono">"nan"</span> / <span class="font-mono">"&lt;na&gt;"</span> → <span class="font-mono">""</span></li>
+                    <li><span class="font-mono">bool</span> → <span class="font-mono">"True"</span> / <span class="font-mono">"False"</span>（不当数字）</li>
+                    <li>数字 → <span class="font-mono">Decimal.quantize(0.01, ROUND_HALF_UP)</span></li>
+                    <li>含 T/空格的 ISO datetime → UTC + <span class="font-mono">Z</span></li>
+                    <li><span class="font-mono">YYYY-M-D</span> / <span class="font-mono">YYYY/M/D</span> → 零填充 ISO date</li>
+                    <li>长形式英文 <span class="font-mono">March 1, 2024</span> → ISO date</li>
+                    <li>strip + 去 \r\n 后保留原文（US/EU 歧义日期不动）</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- 评分公式 -->
+        <h3 class="text-2xl font-bold mb-2">🧮 KDD Cup 评分公式（评分域）</h3>
+        <p class="text-gray-600 mb-4 text-sm">本地 self-eval 在 <span class="font-mono">run/scoring.py</span>，只做最保守的规范化（strip + null literals），<span class="font-semibold">不</span>共用投票域规范化，避免本地分数虚高。</p>
+        <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl p-8 border border-indigo-100 mb-4">
+            <div class="text-center">
+                <div class="text-2xl md:text-3xl font-mono font-bold text-indigo-700">
+                    Score = max(0, &nbsp;Recall &minus; λ · (extra / predicted))
+                </div>
+                <div class="mt-3 text-sm text-gray-700">λ = 0.5 · 列签名 multiset 匹配 · 列名/列顺序/行顺序均忽略</div>
+            </div>
+            <div class="grid md:grid-cols-3 gap-4 mt-6 text-sm">
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="font-semibold text-gray-700">Recall</div>
+                    <div class="text-xs text-gray-500 mt-1"><span class="font-mono">matched / gold_columns</span></div>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="font-semibold text-gray-700">extra</div>
+                    <div class="text-xs text-gray-500 mt-1"><span class="font-mono">predicted_columns − matched</span></div>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="font-semibold text-gray-700">惩罚直觉</div>
+                    <div class="text-xs text-gray-500 mt-1">1 列 gold + 4 多余列 → 仅得 0.6 分</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5. Key Results                                                -->
+<!-- ============================================================ -->
+<section id="results" class="py-20 bg-gray-50">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Key Results</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">运行性能与时间预算</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">基于本地 50 题完整 run（<span class="font-mono">artifacts/runs/20260501T154359Z</span>）的实测分布。</p>
+        </div>
+
+        <!-- 单 task 耗时分布 -->
+        <h3 class="text-xl font-bold mb-4">⏱️ 单 task 耗时分布</h3>
+        <div class="grid md:grid-cols-3 gap-5 mb-12">
+            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 card-hover">
+                <h4 class="font-semibold text-gray-700 mb-2">P50 中位数</h4>
+                <div class="flex items-end gap-2">
+                    <span class="text-4xl font-bold text-blue-600">36</span>
+                    <span class="text-sm text-gray-500 mb-1">秒</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2 mt-3">
+                    <div class="progress-bar bg-blue-500 h-2 rounded-full" data-width="10%"></div>
+                </div>
+                <div class="mt-2 text-xs text-gray-500">绝大多数任务在 1 分钟内完成</div>
+            </div>
+            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 card-hover">
+                <h4 class="font-semibold text-gray-700 mb-2">P75</h4>
+                <div class="flex items-end gap-2">
+                    <span class="text-4xl font-bold text-indigo-600">67</span>
+                    <span class="text-sm text-gray-500 mb-1">秒</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2 mt-3">
+                    <div class="progress-bar bg-indigo-500 h-2 rounded-full" data-width="19%"></div>
+                </div>
+                <div class="mt-2 text-xs text-gray-500">75% 任务 ≤ 67s，余下是长尾</div>
+            </div>
+            <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 card-hover">
+                <h4 class="font-semibold text-gray-700 mb-2">P95</h4>
+                <div class="flex items-end gap-2">
+                    <span class="text-4xl font-bold text-purple-600">~356</span>
+                    <span class="text-sm text-gray-500 mb-1">秒</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2 mt-3">
+                    <div class="progress-bar bg-purple-500 h-2 rounded-full" data-width="100%"></div>
+                </div>
+                <div class="mt-2 text-xs text-gray-500"><span class="font-mono">task_timeout=600</span> 收得住</div>
+            </div>
+        </div>
+
+        <!-- 时间预算与并发 -->
+        <h3 class="text-xl font-bold mb-4">📊 总时间预算 vs 实测</h3>
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-12">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-100 text-gray-700">
+                    <tr>
+                        <th class="px-4 py-3 text-left">场景</th>
+                        <th class="px-4 py-3 text-left">耗时</th>
+                        <th class="px-4 py-3 text-left">说明</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr>
+                        <td class="px-4 py-3">50 题串行</td>
+                        <td class="px-4 py-3 font-mono">5853s ≈ 1.63h</td>
+                        <td class="px-4 py-3 text-gray-600">单 worker，无并发</td>
+                    </tr>
+                    <tr class="bg-emerald-50">
+                        <td class="px-4 py-3">50 题 max_workers=4</td>
+                        <td class="px-4 py-3 font-mono font-bold text-emerald-700">≈ 24min</td>
+                        <td class="px-4 py-3 text-gray-600">线性度被 LLM 限流拖慢</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3">A 榜上限</td>
+                        <td class="px-4 py-3 font-mono">7200s = 2h</td>
+                        <td class="px-4 py-3 text-gray-600">外层 timeout --signal=TERM --kill-after=30s</td>
+                    </tr>
+                    <tr>
+                        <td class="px-4 py-3">B 榜上限</td>
+                        <td class="px-4 py-3 font-mono">12h</td>
+                        <td class="px-4 py-3 text-gray-600">3 轮 + retry pass 仍有大量缓冲</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 配置变体对比 -->
+        <h3 class="text-xl font-bold mb-4">⚙️ 三套 YAML 配置对比</h3>
+        <div class="grid md:grid-cols-3 gap-5">
+            <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 card-hover">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="font-bold">example.yaml</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">官方示例</span>
+                </div>
+                <ul class="text-xs text-gray-700 space-y-1">
+                    <li>model: <span class="font-mono">YOUR_MODEL_NAME</span> 占位</li>
+                    <li>vote_rounds: 1（不投票）</li>
+                    <li>max_workers: 8</li>
+                    <li>用途：占位 / 文档示例</li>
+                </ul>
+            </div>
+            <div class="bg-white rounded-xl p-5 shadow-sm border border-blue-200 ring-2 ring-blue-100 card-hover">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="font-bold">local.yaml</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">本地开发</span>
+                </div>
+                <ul class="text-xs text-gray-700 space-y-1">
+                    <li>真实 API key</li>
+                    <li>vote_rounds: 1（快速冒烟）</li>
+                    <li>max_workers: 8</li>
+                    <li>用途：日常迭代调试</li>
+                </ul>
+            </div>
+            <div class="bg-white rounded-xl p-5 shadow-sm border border-emerald-200 ring-2 ring-emerald-100 card-hover">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="font-bold">submit.yaml</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">提交镜像</span>
+                </div>
+                <ul class="text-xs text-gray-700 space-y-1">
+                    <li><span class="font-mono">${"{"}MODEL_API_URL{"}"}</span> 等环境变量</li>
+                    <li>vote_rounds: 3</li>
+                    <li>max_workers: 2 + timeout 600s</li>
+                    <li><span class="font-mono">/input</span> + <span class="font-mono">/output</span> 绝对路径</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 6. Case Studies                                               -->
+<!-- ============================================================ -->
+<section id="cases" class="py-20 bg-white">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Case Studies</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">5 个代表性技术案例</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">每个案例对应仓库里一段被高强度打磨过的代码，背后都有具体的回归故事。</p>
+        </div>
+
+        <!-- Tabs -->
+        <div data-tab-group="cases" class="bg-gray-50 rounded-2xl p-6 border border-gray-200">
+            <div class="flex flex-wrap gap-2 mb-6">
+                <button class="tab-btn active px-4 py-2 rounded-lg text-sm border border-gray-300 bg-white" data-tab-key="profile" onclick="showTab('cases','profile')">📁 Dataset Profile</button>
+                <button class="tab-btn px-4 py-2 rounded-lg text-sm border border-gray-300 bg-white" data-tab-key="readdoc" onclick="showTab('cases','readdoc')">📄 read_doc 三模式</button>
+                <button class="tab-btn px-4 py-2 rounded-lg text-sm border border-gray-300 bg-white" data-tab-key="vote" onclick="showTab('cases','vote')">🎲 多轮投票协议</button>
+                <button class="tab-btn px-4 py-2 rounded-lg text-sm border border-gray-300 bg-white" data-tab-key="retry" onclick="showTab('cases','retry')">🔁 Retry Pass</button>
+                <button class="tab-btn px-4 py-2 rounded-lg text-sm border border-gray-300 bg-white" data-tab-key="entrypoint" onclick="showTab('cases','entrypoint')">🛡️ 5s 同步守护</button>
+            </div>
+
+            <!-- Case 1: Dataset Profile -->
+            <div class="tab-content active bg-white rounded-xl p-6 border border-gray-200" data-tab-key="profile">
+                <h3 class="text-2xl font-bold mb-3">Case 1 · Dataset Profile 反幻觉前置</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="font-bold mb-2">📌 任务背景</h4>
+                        <p class="text-sm text-gray-700 mb-3">早期版本 ~80% 的失败是 planner 凭空捏造路径：题目里有 sqlite，模型问 <span class="font-mono">data.db</span>，但实际只有 <span class="font-mono">db/main.sqlite</span>，连环 <span class="font-mono">FileNotFoundError</span> 把 step 预算耗光。</p>
+                        <h4 class="font-bold mb-2">⚠️ 难点</h4>
+                        <ul class="text-sm text-gray-700 space-y-1 mb-3">
+                            <li>• 不能依赖模型记住每道题的目录布局</li>
+                            <li>• 不能让 planner prompt 太长（每个 task 都要付出这个成本）</li>
+                            <li>• 必须覆盖 sqlite/json/csv/md/txt 五种主要格式</li>
+                        </ul>
+                        <h4 class="font-bold mb-2">💡 解法</h4>
+                        <p class="text-sm text-gray-700">在调用 planner LLM 之前先用 <span class="font-mono">_build_dataset_profile(task)</span> 扫一遍 <span class="font-mono">context/</span>，注入真实文件清单 + sqlite schema + 文件 head 到 prompt，并强制"只引用 profile 里的文件"。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">🔧 实现片段</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">def _build_dataset_profile(task, *, max_depth=4):
+    listing = list_context_tree(task, max_depth)
+    lines = ["Files under context/ (each line shows the EXACT "
+             "path to use as the tool `path` argument):"]
+
+    for entry in listing["entries"]:
+        if entry["kind"] == "dir":
+            lines.append(f"  [DIR ] {entry['path']}/")
+        else:
+            lines.append(f"  [FILE] {entry['path']}"
+                         f" ({entry['size']} bytes)")
+
+    # Per-format deep dive
+    for entry in file_entries:
+        suffix = Path(entry["path"]).suffix.lower()
+        if suffix in _SQLITE_EXTENSIONS:   # .db / .sqlite
+            sections.append(_profile_sqlite(task, path))
+        elif suffix in _JSON_EXTENSIONS:    # .json
+            sections.append(_profile_json(task, path))
+        elif suffix in _CSV_EXTENSIONS:     # .csv
+            sections.append(_profile_csv(task, path))
+        elif suffix in _DOC_EXTENSIONS:     # .md / .txt
+            sections.append(_profile_doc(task, path))
+    return "\n".join(lines)</code></pre>
+                        <h4 class="font-bold mb-2 mt-4">📈 收益</h4>
+                        <p class="text-sm text-gray-700">幻觉路径类失败从 ~80% 直接归零；planner prompt 增量约 1-3KB，与 task 总时延比基本不可见。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Case 2: read_doc -->
+            <div class="tab-content bg-white rounded-xl p-6 border border-gray-200" data-tab-key="readdoc">
+                <h3 class="text-2xl font-bold mb-3">Case 2 · <span class="font-mono">read_doc</span> 三模式自适应</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="font-bold mb-2">📌 任务背景</h4>
+                        <p class="text-sm text-gray-700 mb-3">trace 分析（<span class="font-mono">20260506T010810Z</span>）：5/8 step-budget failure 都是 executor 反复 paginate 一个 20-30KB markdown 文档 5-9 次，每次 paginate 都要 LLM 决策一次。task_396 用 8 次 <span class="font-mono">execute_python</span> 反复 grep <span class="font-mono">superhero.md</span>。</p>
+                        <h4 class="font-bold mb-2">💡 解法</h4>
+                        <p class="text-sm text-gray-700 mb-2">同一个工具按入参动态切换三种模式：</p>
+                        <table class="w-full text-xs border border-gray-200 rounded">
+                            <thead class="bg-gray-100"><tr><th class="px-2 py-1 text-left">mode</th><th class="px-2 py-1 text-left">触发</th><th class="px-2 py-1 text-left">输出</th></tr></thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr><td class="px-2 py-1 font-mono">full</td><td class="px-2 py-1">≤32KB</td><td class="px-2 py-1">全文 1 次</td></tr>
+                                <tr><td class="px-2 py-1 font-mono">slice</td><td class="px-2 py-1">offset&gt;0</td><td class="px-2 py-1">分页 + next_offset</td></tr>
+                                <tr class="bg-yellow-50"><td class="px-2 py-1 font-mono">grep</td><td class="px-2 py-1">传入 grep=&lt;regex&gt;</td><td class="px-2 py-1">±400字符匹配窗</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">🔧 三模式调用示例</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python"># 1) full 模式：默认，文档 ≤32KB 一次返回
+read_doc(path="doc/Laboratory.md")
+# → mode="full", preview=&lt;whole text&gt;, truncated=False
+
+# 2) slice 模式：长文档分页（罕用）
+read_doc(path="doc/big.md", offset=8000, max_chars=4000)
+# → mode="slice", preview=text[8000:12000],
+#   next_offset=12000, truncated=True
+
+# 3) grep 模式（推荐，关键词跳转）
+read_doc(path="doc/superhero.md",
+         grep="Captain Marvel",
+         max_matches=20, context_chars=400)
+# → mode="grep",
+#   preview="...---..." (匹配窗口用 \\n---\\n 分隔),
+#   matches=[{start, end, matched_text}, ...]</code></pre>
+                        <h4 class="font-bold mb-2 mt-4">📈 收益</h4>
+                        <ul class="text-sm text-gray-700 space-y-1">
+                            <li>• 中型文档 (5-30KB) 命中 <span class="font-mono">full</span>，从"5-9 次 paginate"压缩到"1 次"</li>
+                            <li>• 关键词查找命中 <span class="font-mono">grep</span>，单次工具调用替代 8 次 <span class="font-mono">execute_python</span></li>
+                            <li>• <span class="font-mono">max_matches=20 + max_chars</span> 双重上限防止贪心 pattern 拉回整文</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Case 3: 多轮投票 -->
+            <div class="tab-content bg-white rounded-xl p-6 border border-gray-200" data-tab-key="vote">
+                <h3 class="text-2xl font-bold mb-3">Case 3 · 多轮投票 + back-fill 文件命名协议</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="font-bold mb-2">📌 难点：保底 vs 候选</h4>
+                        <p class="text-sm text-gray-700 mb-3">三轮投票要求"轮次产物互不覆盖"（要参与投票），但 entrypoint 后台 5s 一次同步进程要随时能拿到一份保底答案 → 必须有一个稳定的 <span class="font-mono">prediction.csv</span>。</p>
+                        <h4 class="font-bold mb-2">💡 解法</h4>
+                        <ul class="text-sm text-gray-700 space-y-1 mb-3">
+                            <li>• 轮 1 永远写 <span class="font-mono">prediction.csv</span>（保底）</li>
+                            <li>• 轮 N≥2 + base 已存在 → <span class="font-mono">rN.csv</span>（候选）</li>
+                            <li>• 轮 N≥2 + base 不存在 → <span class="font-mono">prediction.csv</span>（back-fill，前面所有轮都没产出）</li>
+                            <li>• 末尾 <span class="font-mono">vote_all_tasks</span> 按签名仲裁，胜者用 atomic replace 覆盖</li>
+                        </ul>
+                        <h4 class="font-bold mb-2">⚠️ 并发陷阱</h4>
+                        <p class="text-sm text-gray-700">必须在 <span class="font-semibold">主线程的 submit 循环</span>解析每个 task 的目标文件名，否则 N 个 worker 同时启动时都看到 base 不存在 → 全 back-fill 互相覆盖。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">🔧 文件名解析逻辑</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">def _round_artifact_filename(round_idx: int,
+                              base_already_exists: bool) -> str:
+    if round_idx &lt;= 1:
+        return "prediction.csv"             # 轮 1 总是写保底
+    if base_already_exists:
+        return f"r{round_idx}.csv"          # 轮 N≥2：候选
+    return "prediction.csv"                  # 轮 N≥2：back-fill</code></pre>
+                        <h4 class="font-bold mb-2 mt-4">🔧 投票裁决（vote.py）</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python"># 候选优先级：("prediction.csv", "r2.csv", "r3.csv", ...)
+present = [i for i, s in enumerate(signatures) if s is not None]
+if len(present) &lt; 3:
+    winner = present[0]                       # earliest 胜
+elif max(sig_counts.values()) &gt;= 2:
+    winner = first index of majority signature  # 多数票
+else:
+    winner = present[0]                       # 全异 → earliest
+
+if winner != 0:                               # 胜者非 prediction.csv
+    _atomic_overwrite(paths[winner], paths[0])  # tmp + os.replace</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Case 4: Retry Pass -->
+            <div class="tab-content bg-white rounded-xl p-6 border border-gray-200" data-tab-key="retry">
+                <h3 class="text-2xl font-bold mb-3">Case 4 · Retry Pass · 失败任务"再跑一次"</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="font-bold mb-2">📌 任务背景</h4>
+                        <p class="text-sm text-gray-700 mb-3">三轮投票后仍有少量 task <span class="font-mono">succeeded=False</span>（典型：被 RateLimit 连杀三次、或全程都没调 <span class="font-mono">answer</span>）。这类 task 已经"白跑"了 3 轮，但只要再试一次，命中概率不低。</p>
+                        <h4 class="font-bold mb-2">💡 解法</h4>
+                        <ul class="text-sm text-gray-700 space-y-1">
+                            <li>• 写到独立文件名 <span class="font-mono">prediction_retry.csv</span> + <span class="font-mono">trace_retry.json</span></li>
+                            <li>• <span class="font-semibold">成功</span> → <span class="font-mono">Path.replace</span> 原子重命名为 <span class="font-mono">prediction.csv</span> / <span class="font-mono">trace.json</span></li>
+                            <li>• <span class="font-semibold">失败</span> → 删除 retry 文件，原本失败状态保持不变</li>
+                        </ul>
+                        <h4 class="font-bold mb-2 mt-3">🌟 不变量</h4>
+                        <p class="text-sm text-gray-700">失败的 retry <span class="font-semibold">绝不</span>污染原本的失败状态。只能做加法（成功了提升）不会做减法。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">🔧 promote / discard 逻辑</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-python">def _promote_retry_artifacts(retry_artifact):
+    task_dir = retry_artifact.task_output_dir
+    canonical_trace = task_dir / "trace.json"
+    canonical_prediction = task_dir / "prediction.csv"
+
+    # Path.replace 在 POSIX 上是原子且会覆盖目标
+    (task_dir / "trace_retry.json").replace(canonical_trace)
+    if retry_artifact.prediction_csv_path is not None:
+        retry_artifact.prediction_csv_path \
+            .replace(canonical_prediction)
+    return TaskRunArtifacts(...)
+
+def _discard_retry_artifacts(task_output_dir):
+    for filename in ("prediction_retry.csv",
+                     "trace_retry.json"):
+        stale = task_output_dir / filename
+        if stale.exists():
+            stale.unlink()</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Case 5: entrypoint -->
+            <div class="tab-content bg-white rounded-xl p-6 border border-gray-200" data-tab-key="entrypoint">
+                <h3 class="text-2xl font-bold mb-3">Case 5 · entrypoint.sh · 5s 同步守护进程</h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h4 class="font-bold mb-2">📌 难点：路径错配</h4>
+                        <p class="text-sm text-gray-700 mb-3">runner 把所有 task 写到 <span class="font-mono">/output/&lt;run_id&gt;/task_&lt;id&gt;/prediction.csv</span>（用 run_id 子目录隔离多轮产物）。但评测系统按规则只读 <span class="font-mono">/output/task_&lt;id&gt;/prediction.csv</span>（顶层路径，没有 run_id）。</p>
+                        <h4 class="font-bold mb-2">💡 解法对比</h4>
+                        <table class="w-full text-xs border border-gray-200 rounded mb-2">
+                            <thead class="bg-gray-100"><tr><th class="px-2 py-1 text-left">方案</th><th class="px-2 py-1 text-left">缺点</th></tr></thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <tr><td class="px-2 py-1">runner 直接写顶层</td><td class="px-2 py-1">r2.csv 暴露给评测</td></tr>
+                                <tr><td class="px-2 py-1">跑完后统一拷贝</td><td class="px-2 py-1">SIGKILL 时所有未拷贝丢失</td></tr>
+                                <tr class="bg-emerald-50"><td class="px-2 py-1 font-bold">后台 5s 原子拷贝 ⭐</td><td class="px-2 py-1">最坏丢 5s 内最后一个</td></tr>
+                            </tbody>
+                        </table>
+                        <h4 class="font-bold mb-2">📈 收益</h4>
+                        <p class="text-sm text-gray-700">A 榜 7200s 外层 SIGTERM/SIGKILL 时，所有早已写出的答案都已在顶层路径 → 评测系统能立即读到。最坏只丢 5s 窗口内最后一个 task。</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">🔧 sync_predictions 函数</h4>
+<pre class="bg-gray-900 rounded-lg p-4 text-xs overflow-x-auto"><code class="language-bash">sync_predictions() {
+  shopt -s nullglob
+  for src in /output/*/task_*/prediction.csv; do
+    task_id="$(basename "$(dirname "${src}")")"
+    case "${task_id}" in task_*) ;; *) continue ;; esac
+    dst_dir="/output/${task_id}"
+    mkdir -p "${dst_dir}"
+    # tmp + mv 原子替换，避免读端见到半截文件
+    cp "${src}" "${dst_dir}/prediction.csv.tmp"
+    mv "${dst_dir}/prediction.csv.tmp" \
+       "${dst_dir}/prediction.csv"
+  done
+}
+
+# 后台进程：每 5 秒扫一次
+(while true; do sync_predictions || true; sleep 5; done) &
+SYNC_PID=$!
+
+# trap：SIGTERM 时再做一次最后同步（SIGKILL 不可被 trap）
+trap 'sync_predictions || true; kill $SYNC_PID 2&gt;/dev/null' \
+     EXIT INT TERM</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 7. Insights & Takeaways                                       -->
+<!-- ============================================================ -->
+<section id="insights" class="py-20 bg-gray-50">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-14">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Key Insights &amp; Takeaways</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">四个维度的设计沉淀</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">从设计哲学到工程实践，每一条都经过了真实评测的回归压测。</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-6">
+            <!-- 设计哲学 -->
+            <div class="bg-white rounded-2xl p-7 shadow-sm border border-gray-200 card-hover">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center text-2xl">🎯</div>
+                    <h3 class="font-bold text-xl">设计哲学</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-3">
+                    <li><span class="font-semibold text-indigo-700">保底语义优先于最优解</span><br />
+                        <span class="text-gray-600">prediction.csv 永远是"当前最佳"，多轮只能做加法（投票胜者覆盖）不会做减法。任何时刻 SIGKILL 都已有保底答案。</span></li>
+                    <li><span class="font-semibold text-indigo-700">短焦点 &gt; 长全局</span><br />
+                        <span class="text-gray-600">每个 DAG 节点只看 goal + 上游 1-3 句 summary，不看上游工具调用日志。把"几十轮长上下文"压成"几百字符焦点"。</span></li>
+                    <li><span class="font-semibold text-indigo-700">每一层都不信任上一层</span><br />
+                        <span class="text-gray-600">LLM 单次失败 → executor 自我修正 → 节点 attempts → replanner → 多轮投票 → retry pass，5 层兜底层层叠加。</span></li>
+                </ul>
+            </div>
+
+            <!-- 技术创新 -->
+            <div class="bg-white rounded-2xl p-7 shadow-sm border border-gray-200 card-hover">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center text-2xl">🔬</div>
+                    <h3 class="font-bold text-xl">技术创新</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-3">
+                    <li><span class="font-semibold text-emerald-700">DAG-driven 焦点上下文</span><br />
+                        <span class="text-gray-600">planner 显式画依赖图 + scheduler 注入 focused prompt + mark_node_done 跨节点透传 summary，自然支持子任务并行规划。</span></li>
+                    <li><span class="font-semibold text-emerald-700">规范化签名投票</span><br />
+                        <span class="text-gray-600"><span class="font-mono">compute_table_signature</span> 同时忽略列名/列序/行序，<span class="font-mono">normalize_cell</span> 7 步规范化把"近似相同"答案聚合成同一签名，让多数票真正可投。</span></li>
+                    <li><span class="font-semibold text-emerald-700">差异化 LLM 重试</span><br />
+                        <span class="text-gray-600">planner 致命给 2 retries，executor/reflector 失败有外层兜底给 0 retries；客户端 Timeout 一律不重试，429 优先读 Retry-After。</span></li>
+                    <li><span class="font-semibold text-emerald-700">5s 同步守护进程</span><br />
+                        <span class="text-gray-600">把"评测平台只读 /output/task_*/" 与"runner 写 /output/&lt;run_id&gt;/task_*/"两套路径用 cp+mv 原子拷贝衔接。</span></li>
+                </ul>
+            </div>
+
+            <!-- 实际影响 -->
+            <div class="bg-white rounded-2xl p-7 shadow-sm border border-gray-200 card-hover">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-2xl">🌍</div>
+                    <h3 class="font-bold text-xl">实际影响</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-3">
+                    <li><span class="font-semibold text-blue-700">幻觉路径失败 ~80% → 0%</span><br />
+                        <span class="text-gray-600">Dataset profile 直接消灭这一整类崩溃模式。</span></li>
+                    <li><span class="font-semibold text-blue-700">中型文档处理 5-9 步 → 1 步</span><br />
+                        <span class="text-gray-600">read_doc full 模式 + grep 模式合计省下大量 step。</span></li>
+                    <li><span class="font-semibold text-blue-700">单次抽样 → 3 路投票</span><br />
+                        <span class="text-gray-600">A 榜 7200s 预算下 max_workers=2 + vote_rounds=3 仍留 1.4h 缓冲；B 榜 12h 更绰绰有余。</span></li>
+                    <li><span class="font-semibold text-blue-700">SIGKILL 抗损失 5s 上限</span><br />
+                        <span class="text-gray-600">外层 timeout 强杀也只丢窗口内最后一个 task。</span></li>
+                </ul>
+            </div>
+
+            <!-- 局限与未来 -->
+            <div class="bg-white rounded-2xl p-7 shadow-sm border border-gray-200 card-hover">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center text-2xl">🔮</div>
+                    <h3 class="font-bold text-xl">局限与未来</h3>
+                </div>
+                <ul class="text-sm text-gray-700 space-y-3">
+                    <li><span class="font-semibold text-amber-700">vote_rounds 上限 = 3</span><br />
+                        <span class="text-gray-600">超过 3 轮的"全异 → earliest" tiebreak 会引发 incremental vote 路径行为漂移；当前 config 强制校验 1 ≤ vote_rounds ≤ 3。</span></li>
+                    <li><span class="font-semibold text-amber-700">投票域 vs 评分域规范化分裂</span><br />
+                        <span class="text-gray-600">投票域激进规范化（数字 round 到 2 位、日期归一）让"近似答案"合并；评分域保守，按字节比对避免本地分数虚高。两套规则需要同步维护。</span></li>
+                    <li><span class="font-semibold text-amber-700">单 task 600s 硬切</span><br />
+                        <span class="text-gray-600">P95 ≈ 356s 时仍有少量长尾 task 撞 timeout。后续可探索"按难度动态超时" 或"提前 mark_node_done 让长尾 task 主动放弃换更多 task 完成"。</span></li>
+                    <li><span class="font-semibold text-amber-700">execute_python 未沙箱化</span><br />
+                        <span class="text-gray-600">受控数据集场景下不必沙箱，但若推广到不可信数据需补完整 sandbox。</span></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 8. Lessons Learned (历史教训彩蛋)                              -->
+<!-- ============================================================ -->
+<section id="lessons" class="py-20 bg-white">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="text-center mb-12">
+            <span class="text-sm font-semibold tracking-wider text-indigo-600 uppercase">Lessons Learned</span>
+            <h2 class="text-3xl md:text-4xl font-bold mt-2 mb-3">9 条历史教训（彩蛋）</h2>
+            <p class="text-gray-600 max-w-3xl mx-auto">代码注释里散落的"为什么是这样"，每条都对应一次回归。</p>
+        </div>
+
+        <div class="space-y-3 max-w-5xl mx-auto">
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#1</span> 为什么从 ReAct 单循环切换到 LangGraph DAG</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">长上下文模型迷失（step 20+ 后反复读同一文件）、无法表达依赖关系（先读 A 再 join B 全靠隐式记忆）、走错就污染整段对话无法局部回滚。DAG 解法显式拆分 + 节点级 retry。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#2</span> 为什么用子进程而不是线程跑单个 task</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">线程版本曾遇到单 task 卡 754s（OpenAI SDK 双层 retry 叠加），<span class="font-mono">KeyboardInterrupt</span> 在 C 扩展里失效。改 <span class="font-mono">multiprocessing.Process</span> 后 <span class="font-mono">terminate()</span>+<span class="font-mono">kill()</span> 能强制收尸，子进程崩溃父进程也能从 <span class="font-mono">exitcode</span> 转成 failure_reason 而不让整个 benchmark 挂掉。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#3</span> 为什么 LLM 重试要按调用点差异化</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">历史 bug：<span class="font-mono">langchain-openai</span> 内置 max_retries=2 + 自写 max_attempts=5 双层叠加，单次卡顿放大到 540s。修复：<span class="font-mono">ChatOpenAI(max_retries=0, timeout=30)</span> 关掉内置重试，按调用点（planner=2 / executor=0 / reflector=0）差异化分配，客户端 Timeout 一律不重试。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#4</span> 为什么 prediction.csv 是"保底/补位"而不是"轮 1 结果"</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">最初设计 = 轮 1 结果。问题：轮 1 因 RateLimit 全军覆没时，最终 vote 因 prediction.csv 不存在无法以"earliest"原则裁决。改成"任何阶段只要存在就有保底分"语义后，后续轮次只能做加法不会让结果变更糟。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#5</span> 为什么投票要做"全异 → earliest"</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">3 个候选签名两两不同时，理论上没信号判断谁对。三种 tiebreak（earliest / 最长 / 最短）权衡后选 earliest：不引入新偏置，简单可解释，且与"prediction.csv 是保底"语义一致。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#6</span> 为什么列签名既忽略列名又忽略列顺序</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">KDD Cup 6.2 明确"列签名匹配，忽略列名"，所以 <span class="font-mono">avg / 平均值 / mean</span> 都不影响分数。同时忽略行序：很多 SQL 查询无 ORDER BY 时返回顺序未定义，强制行序匹配会误判正确答案。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#7</span> 为什么数字规范化用 ROUND_HALF_UP 到 2 位（仅在投票域）</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">投票时不规范化 → <span class="font-mono">5519.475...</span> 与 <span class="font-mono">5519.48</span> 永远投不出多数。但提交时 prompt 反复强调"不要主动 round"——评分时按字节比 gold，原始精度更安全。两套规则刻意分裂。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#8</span> 为什么文档 ≤32KB 全文返回</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">trace 分析（<span class="font-mono">20260506T010810Z</span>）：5/8 step-budget failure 都是 paginate 20-30KB markdown 5-9 次。<span class="font-mono">SHORT_DOC_FULL_RETURN_THRESHOLD = 32_000</span> 把这一类 step 浪费降到 1 次；32KB 上限避免巨型病历炸 LLM 上下文。</p>
+            </details>
+
+            <details class="bg-gray-50 rounded-xl border border-gray-200 p-5 group">
+                <summary class="font-semibold flex items-center justify-between gap-3">
+                    <span><span class="font-mono text-indigo-600 mr-2">#9</span> 为什么 task_timeout 收紧到 600s 而不是 1800s</span>
+                    <span class="text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+                </summary>
+                <p class="mt-3 text-sm text-gray-700">原 1800s 让 4 worker 同时卡死时吃光大半总预算（A 榜 7200s）。本地 P95≈356s + 20% 缓冲 → 360s，让长尾 task 主动放弃换更多其他 task 完成。提交配置最终选 600s + workers=2 + vote_rounds=3，整体在 7200s 内仍有 1.4h 缓冲。</p>
+            </details>
+        </div>
+
+        <div class="mt-12 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl p-8 text-center">
+            <h3 class="text-xl font-bold mb-2">📚 想看完整故事？</h3>
+            <p class="text-white/90 text-sm mb-4">本总结基于 <span class="font-mono">docs/architecture.md</span>（10 章 1357 行）。原文档逐文件、逐函数解释了所有设计决策与代码引用。</p>
+            <a href="architecture.md" class="inline-flex items-center gap-2 px-5 py-2.5 bg-white text-indigo-700 rounded-full font-semibold hover:bg-yellow-300 transition-colors">📄 阅读完整架构文档 →</a>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- Footer                                                        -->
+<!-- ============================================================ -->
+<footer class="bg-gray-900 text-gray-300 py-12">
+    <div class="max-w-7xl mx-auto px-6">
+        <div class="grid md:grid-cols-3 gap-8">
+            <div>
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="w-8 h-8 rounded-lg gradient-hero flex items-center justify-center text-white font-bold">B</div>
+                    <span class="font-bold text-lg text-white">boost-agent</span>
+                </div>
+                <p class="text-sm text-gray-400">基于 LangGraph DAG 编排 + 多轮投票 + 失败自愈的数据分析 Agent。</p>
+            </div>
+            <div>
+                <h4 class="font-semibold text-white mb-3">文档导航</h4>
+                <ul class="space-y-1 text-sm">
+                    <li><a href="architecture.md" class="hover:text-white">📄 完整架构文档（架构 RFC）</a></li>
+                    <li><a href="07-langgraph-architecture.md" class="hover:text-white">📐 LangGraph 架构对比</a></li>
+                    <li><a href="05-our-agent-design.md" class="hover:text-white">🧠 Agent 设计文档</a></li>
+                    <li><a href="../README.md" class="hover:text-white">📘 项目 README</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 class="font-semibold text-white mb-3">关键文件</h4>
+                <ul class="space-y-1 text-sm font-mono text-gray-400">
+                    <li>src/data_agent_baseline/agents/langgraph_agent.py</li>
+                    <li>src/data_agent_baseline/run/runner.py</li>
+                    <li>src/data_agent_baseline/run/vote.py</li>
+                    <li>configs/react_baseline.submit.yaml</li>
+                    <li>entrypoint.sh</li>
+                </ul>
+            </div>
+        </div>
+        <div class="border-t border-gray-700 mt-8 pt-6 text-sm text-gray-500 flex flex-col md:flex-row justify-between gap-2">
+            <span>📝 由 paper-summarizer skill 生成 · 基于 docs/architecture.md (1357 行)</span>
+            <span>KDD Cup 2026 DataAgent-Bench · 2026-05</span>
+        </div>
+    </div>
+</footer>
+
+<!-- ============================================================ -->
+<!-- JS                                                            -->
+<!-- ============================================================ -->
+<script>
+    // Highlight all code blocks
+    document.addEventListener('DOMContentLoaded', () => {
+        if (window.hljs) hljs.highlightAll();
+
+        // Animate progress bars on scroll into view
+        const bars = document.querySelectorAll('.progress-bar');
+        const io = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const el = entry.target;
+                    const target = el.dataset.width || '0%';
+                    el.style.width = target;
+                    io.unobserve(el);
+                }
+            });
+        }, { threshold: 0.4 });
+        bars.forEach((b) => { b.style.width = '0%'; io.observe(b); });
+
+        // Section spy for nav highlight
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-link');
+        const spy = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    navLinks.forEach((l) => l.classList.toggle('active', l.getAttribute('href') === '#' + id));
+                }
+            });
+        }, { rootMargin: '-40% 0px -55% 0px' });
+        sections.forEach((s) => spy.observe(s));
+    });
+
+    function showTab(group, key) {
+        const buttons = document.querySelectorAll(`[data-tab-group="${group}"] .tab-btn`);
+        const contents = document.querySelectorAll(`[data-tab-group="${group}"] .tab-content`);
+        buttons.forEach((b) => b.classList.toggle('active', b.dataset.tabKey === key));
+        contents.forEach((c) => c.classList.toggle('active', c.dataset.tabKey === key));
+    }
+
+    function toggleExpandable(el) {
+        el.classList.toggle('open');
+    }
+</script>
+
+</body>
+</html>

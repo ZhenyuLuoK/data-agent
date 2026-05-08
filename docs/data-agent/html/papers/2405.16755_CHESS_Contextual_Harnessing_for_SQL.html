@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CHESS: Contextual Harnessing for Efficient SQL Synthesis · 论文总结</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="../assets/base.css" />
+</head>
+<body>
+
+<div class="topbar">
+  <div class="row">
+    <a href="../index.html">← 返回首页</a>
+    <div class="toc">
+      <a href="#problem">问题</a>
+      <a href="#method">方法</a>
+      <a href="#eval">评估</a>
+      <a href="#results">结果</a>
+      <a href="#cases">案例</a>
+      <a href="#insights">启发</a>
+    </div>
+    <a href="../../papers/2405.16755_CHESS_Contextual_Harnessing_for_SQL.pdf" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="inner">
+    <div style="font-size:.9rem; opacity:.85; margin-bottom:.5rem;">arXiv:2405.16755 · ICLR 2025</div>
+    <h1>CHESS: Contextual Harnessing for Efficient SQL Synthesis</h1>
+    <div class="meta">
+      <span>👥 Shayan Talaei, Mohammadreza Pourreza, Yu-Chen Chang, Azalia Mirhoseini, Amin Saberi</span>
+      <span>🏛️ Stanford University</span>
+      <span>📅 2024.05</span>
+    </div>
+    <p class="tagline">
+      面向<strong>真实大规模数据库</strong>（千列 schema、含字面值常量、多方言）的 NL2SQL 系统：
+      <code>实体/上下文检索 (LSH+嵌入) → schema 选择 → 候选生成 → Unit-Test 化选择</code> 四 Agent 协作。
+      在 BIRD 上达到 <strong>65.00% dev / 66.69% test EX</strong>（v2，Gemini-1.5-Pro 配置可达 71.10%）。
+    </p>
+    <div class="stats">
+      <div class="stat"><div class="value">4</div><div class="label">协作 Agent (IR/SS/CG/UT)</div></div>
+      <div class="stat"><div class="value">65.00%</div><div class="label">BIRD Dev EX</div></div>
+      <div class="stat"><div class="value">66.69%</div><div class="label">BIRD Test EX</div></div>
+      <div class="stat"><div class="value">71.10%</div><div class="label">最强配置（Gemini-1.5-Pro）</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <section class="block" id="problem">
+    <h2>1. 核心问题与洞察</h2>
+    <div class="panel-gap">
+      <h3>❌ MAC-SQL/DIN-SQL 在大型真实 DB 上的瓶颈</h3>
+      <div class="grid grid-2">
+        <div>
+          <h4>① Schema 太大塞不下</h4>
+          <p>BIRD 中 financial DB 含 8 张表 50+ 列，表面看不大，但很多列名缩写（<code>k_symbol</code>、<code>operation</code>），需要"列描述"信息才能选对。MAC-SQL 单纯靠列名很难命中。</p>
+        </div>
+        <div>
+          <h4>② 字面值常量找不到</h4>
+          <p>问题里说 "show me the customer named 'James Bond'"，但 schema 不告诉你 customer.name 列里到底有 'James Bond' 还是 'James BOND'。</p>
+        </div>
+        <div>
+          <h4>③ 候选 SQL 没有"测试"</h4>
+          <p>多候选选择常用 self-consistency（majority vote），但 SQL 多样化时同一道题的候选可能写法各异。</p>
+        </div>
+        <div>
+          <h4>④ Token 经济性差</h4>
+          <p>大型 DB 直接喂进去成本高、推理慢。生产环境需要在准确率与成本间权衡。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-insight">
+      <h3>✅ 核心洞察</h3>
+      <p>
+        把 NL2SQL 视为<strong>检索增强生成 (RAG)</strong> 任务：
+        把"列描述、典型值、外键关系"等元信息预先索引（嵌入 + LSH），
+        在生成时按问题动态检索相关上下文，
+        并用<strong>"生成单元测试 → 用测试评判候选 SQL"</strong> 的方式做选择。
+      </p>
+    </div>
+
+    <h3>逻辑链路</h3>
+    <div class="pipeline">
+      <span class="step">问题 + 大型 DB</span>
+      <span class="arrow">→</span>
+      <span class="step">🔎 Entity & Context Retrieval (LSH+Embed)</span>
+      <span class="arrow">→</span>
+      <span class="step">🎯 Schema Selection (多轮过滤)</span>
+      <span class="arrow">→</span>
+      <span class="step">⚙️ Candidate Generation (多候选 + Revision)</span>
+      <span class="arrow">→</span>
+      <span class="step">🧪 Unit-Test Selector</span>
+      <span class="arrow">→</span>
+      <span class="step">最终 SQL</span>
+    </div>
+  </section>
+
+  <section class="block alt" id="method">
+    <div class="container" style="padding:0;">
+      <h2>2. 方法：四 Agent + 上下文检索</h2>
+
+      <div class="tabs" id="m-tabs">
+        <button class="tab-btn" data-tab="m1">🔎 Entity & Context Retrieval</button>
+        <button class="tab-btn" data-tab="m2">🎯 Schema Selection</button>
+        <button class="tab-btn" data-tab="m3">⚙️ Candidate Generation</button>
+        <button class="tab-btn" data-tab="m4">🧪 Unit-Test Selector</button>
+
+        <div class="tab-content" id="m1">
+          <h4>实体与上下文检索</h4>
+          <p>预处理阶段，对 DB 离线建索引：</p>
+          <ul>
+            <li><strong>Entity Index (LSH)</strong>：对 DB 中所有字符串列的<strong>实际取值</strong>（限制采样数量），用 MinHash + LSH 建近似匹配索引。让"James Bond"这种字面值能 fuzzy 匹配到 <code>customer.name</code>。</li>
+            <li><strong>Context Index (Embedding)</strong>：列名 + 列描述 + 列说明文档（如果有）拼起来，用 sentence-BERT 计算 embedding。</li>
+            <li><strong>Keyword Extraction</strong>：用 LLM 从问题里抽关键短语（实体名、量化条件、时间表达等）作为检索 query。</li>
+          </ul>
+          <p>检索结果是一组"候选列 + 候选字面值"。</p>
+        </div>
+
+        <div class="tab-content" id="m2">
+          <h4>Schema 选择（多轮过滤）</h4>
+          <p>把检索结果交给 LLM，进行三轮逐步精炼：</p>
+          <ol>
+            <li><strong>Tentative Schema</strong>：让 LLM 列出"可能用到"的表/列（recall 优先）</li>
+            <li><strong>Column Filter</strong>：让 LLM 给每个候选列打"必要 / 可能 / 不需要"标签</li>
+            <li><strong>Final Selection</strong>：只保留"必要 + 部分可能"，得到最小覆盖 sub-schema</li>
+          </ol>
+          <p>这种"先广后窄"的策略避免了"一把梭过滤"导致的关键列遗漏。</p>
+        </div>
+
+        <div class="tab-content" id="m3">
+          <h4>候选生成与修正</h4>
+          <ul>
+            <li><strong>多采样候选</strong>：用 GPT-4 在不同 temperature 下生成 N（默认 21）个候选 SQL</li>
+            <li><strong>Revision 子模块</strong>：对每个候选执行，根据错误回填给 LLM 让其修正，最多 K 轮</li>
+            <li><strong>过滤无效</strong>：执行失败、返回空结果、类型错误的候选会被剔除</li>
+          </ul>
+        </div>
+
+        <div class="tab-content" id="m4">
+          <h4>Unit-Test 化候选选择</h4>
+          <p><strong>关键创新</strong>：不用 self-consistency 多数投票（容易被多数错误带偏），而是让 LLM 生成"单元测试"：</p>
+<pre><code class="language-text">问题: "Find names of singers from France."
+LLM 生成的测试:
+- 结果应该是字符串列表
+- 每条记录的 country 字段应该是 'France' 或 'FRA'
+- 不应包含 NULL
+- 行数应该 &gt; 0 (合理假设)
+
+逐个候选 SQL 跑这些测试 → 选通过最多的</code></pre>
+          <p>这等于让 LLM 在"生成 SQL"和"评判 SQL"两个角色上互为对手，借鉴了 program synthesis 中的 "specification + verification" 思想。</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>设计哲学</strong>：CHESS 把 NL2SQL 从"prompt + 模板生成"提升为"系统级检索增强 + 测试驱动选择"。这是它在大型 DB 上 token 成本低、准确率高的根本原因。
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="eval">
+    <h2>3. 评估框架</h2>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Benchmark</h3>
+        <ul>
+          <li>BIRD（含外部知识、脏数据、效率维度）</li>
+          <li>Spider（轻量对比）</li>
+          <li>SQUALL、Bird-Critic（鲁棒性）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>对比基线</h3>
+        <ul>
+          <li>DIN-SQL + GPT-4 (55.9%)</li>
+          <li>MAC-SQL + GPT-4 (59.6%)</li>
+          <li>SuperSQL, DAIL-SQL</li>
+          <li>各种 self-consistency 选择策略</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block alt" id="results">
+    <div class="container" style="padding:0;">
+      <h2>4. 关键结果</h2>
+
+      <div class="grid grid-3">
+        <div class="metric">
+          <div class="label">BIRD Dev EX</div>
+          <div class="value">65.00<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:65%;"></div></div>
+          <div class="delta up">CHESS(IR,CG,UT) 完整 pipeline</div>
+        </div>
+        <div class="metric">
+          <div class="label">BIRD Test EX</div>
+          <div class="value">66.69<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:66.69%;"></div></div>
+          <div class="delta up">v2 论文官方数字</div>
+        </div>
+        <div class="metric">
+          <div class="label">最强配置 EX</div>
+          <div class="value">71.10<span style="font-size:1rem;">%</span></div>
+          <div class="bar"><div style="width:71.1%;"></div></div>
+          <div class="delta up">Gemini-1.5-Pro，BIRD test</div>
+        </div>
+      </div>
+
+      <h3>关键报告（来自论文 v2 §4）</h3>
+      <ul>
+        <li>提交时（2024-05），CHESS 在 BIRD 排行榜上排名所有公开方法之首。</li>
+        <li>"CHESS 在 BIRD test 集达到 71.10% accuracy，与当时领先的<strong>专有方法（Pourreza et al., 2024 即 CHASE-SQL 早期版）</strong>仅差 2 个百分点"——论文原文。</li>
+        <li>三组件简称：<code>IR</code> = Information Retrieval、<code>CG</code> = Candidate Generation、<code>UT</code> = Unit Test、<code>SS</code> = Schema Selection。</li>
+      </ul>
+
+      <h3>消融研究（论文 §4.2.1）</h3>
+      <p>论文采用 <strong>CHESS(IR, CG, UT)</strong> 等子集组合做消融。整体趋势：</p>
+      <ul>
+        <li>去掉 <strong>Unit-Test Selector</strong> 改用 self-consistency：复杂、长尾问题准确率下降</li>
+        <li>去掉 <strong>Entity Retrieval (LSH)</strong>：含字面值/同义匹配的题严重退化</li>
+        <li>去掉 <strong>多轮 Schema Filter</strong>：在大 schema（数百列）DB 上 recall 不足</li>
+      </ul>
+      <p style="font-size:.85rem; color:var(--text-soft);">数据来源：CHESS 论文（<a href="https://arxiv.org/abs/2405.16755" target="_blank">arXiv:2405.16755 v2</a>）。具体消融数字详见论文 Table。</p>
+    </div>
+  </section>
+
+  <section class="block" id="cases">
+    <h2>5. 三大检索机制覆盖的失败模式</h2>
+    <p style="color:var(--text-soft); font-size:.9rem;">基于 CHESS 论文 Section 3（Method）与 Section 4（Experiments）。</p>
+
+    <div class="tabs" id="case-tabs">
+      <button class="tab-btn" data-tab="c1">模式 1: 字面值不匹配</button>
+      <button class="tab-btn" data-tab="c2">模式 2: 列语义模糊</button>
+      <button class="tab-btn" data-tab="c3">模式 3: 大 schema 信息过载</button>
+    </div>
+
+    <div class="tab-content" id="c1">
+      <h4>问题文本字面值与库内取值不一致</h4>
+      <p>用户在自然语言中写的字面常量经常与 DB 内真实存储不一致：大小写差异、重音符差异、缩写、半角/全角、enum 取值的另一种拼写。</p>
+      <p>CHESS Entity Retrieval 的设计：</p>
+      <ul>
+        <li>对所有可能的 string 列预先建 LSH (MinHash) 索引；</li>
+        <li>查询时用问题中的字面常量做近似匹配，召回 DB 内最相近的实际取值；</li>
+        <li>把"字面常量 → 实际值"的映射作为 hint 传给 SQL 生成器。</li>
+      </ul>
+      <p>论文消融显示这是 BIRD 上对"含 evidence/字面值"题型增益最大的单一模块。</p>
+    </div>
+
+    <div class="tab-content" id="c2">
+      <h4>列名/列含义不直观</h4>
+      <p>真实企业 schema 中存在大量缩写列名、跨语言列名、enum 列含义不明等情况；仅凭 <code>CREATE TABLE</code> 的列名+类型无法让 LLM 正确选择列。</p>
+      <p>CHESS Context Retrieval 的设计：</p>
+      <ul>
+        <li>把 schema 文档（列描述、表说明、业务术语表）切片并构建向量索引；</li>
+        <li>查询时按问题语义召回最相关的列描述片段；</li>
+        <li>作为额外 context 提供给 schema linking 与 SQL 生成阶段。</li>
+      </ul>
+    </div>
+
+    <div class="tab-content" id="c3">
+      <h4>大型 schema 上下文超长 + 噪声干扰</h4>
+      <p>当库含数百表、千列时，全 schema 装不进 prompt，且无关列严重干扰 SQL 生成。</p>
+      <p>CHESS Schema Selection（多轮 LLM filter + 检索召回）的设计：</p>
+      <ul>
+        <li>第一轮 LLM 列出"可能用到"的表列（recall 优先）；</li>
+        <li>第二轮 LLM 给每列打"必要 / 可能 / 不需要"标签；</li>
+        <li>最终保留必要 + 部分可能，得到一个最小覆盖子 schema；</li>
+        <li>论文消融显示移除多轮 filter 在大 schema 场景上 recall 不足、最终 EX 显著下降。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="block alt" id="insights">
+    <div class="container" style="padding:0;">
+      <h2>6. 启发与未来方向</h2>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3>💡 设计哲学</h3>
+          <ul>
+            <li><strong>NL2SQL = RAG 问题</strong>：检索是核心</li>
+            <li><strong>多轮过滤优于一把梭</strong></li>
+            <li><strong>Unit-Test 是更可靠的 verifier</strong></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🚀 技术贡献</h3>
+          <ul>
+            <li>首次系统化"NL2SQL + RAG"路线</li>
+            <li>LSH 字面值匹配在 BIRD 上对"含 evidence/字面值"题型增益最大（论文消融 Table 5）</li>
+            <li>Unit-Test 选择被后续 CHASE-SQL、XiYan-SQL 部分继承</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>🌍 影响</h3>
+          <ul>
+            <li>ICLR 2025 收录</li>
+            <li>开源代码 <code>github.com/ShayanTalaei/CHESS</code></li>
+            <li>启发企业落地（Snowflake Cortex 文档参考其检索路径）</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>⚠️ 局限</h3>
+          <ul>
+            <li>需要离线预索引（动态 schema 不友好）</li>
+            <li>21 候选 + 多轮 revision 推理成本仍高</li>
+            <li>方言适配（PostgreSQL/Snowflake/BigQuery）未深入</li>
+            <li>Spider 2.0-Snow 等企业级评测显示 prompt-only 方法的迁移能力有限（第三方 benchmarking 报告 CHESS+GPT-4o 在 Spider 2.0-Snow 仅 1.28% EX）</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>7. 参考资源</h2>
+    <ul>
+      <li>📄 论文：<a href="https://arxiv.org/abs/2405.16755" target="_blank">arXiv:2405.16755</a></li>
+      <li>💻 代码：<a href="https://github.com/ShayanTalaei/CHESS" target="_blank">github.com/ShayanTalaei/CHESS</a></li>
+      <li>📑 关联：MAC-SQL · CHASE-SQL · XiYan-SQL（多生成器 + RAG 后续工作）</li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="page-footer">
+  <p>Data Agent 论文总结集 · CHESS · Generated with paper-summarizer skill</p>
+  <p><a href="../index.html">← 返回论文集首页</a></p>
+</footer>
+
+<script src="../assets/components.js"></script>
+</body>
+</html>
