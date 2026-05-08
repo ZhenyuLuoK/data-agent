@@ -1,0 +1,18 @@
+dataset:
+  root_path: /input
+
+agent:
+  # 注意：当前 ${VAR:-default} 实现不支持嵌套，请勿写 ${A:-${B:-x}}
+  model:    ${MODEL_NAME:-MODEL_NAME_NOT_SET}
+  api_base: ${MODEL_API_URL:-http://MODEL_API_URL_NOT_SET.invalid}
+  api_key:  ${MODEL_API_KEY:-}
+  # max_steps 已硬编码在 LangGraphAgentConfig 默认值里（24），不再从此处透传。
+  temperature: 0.5
+
+run:
+  output_dir: /output
+  # run_id 留空 → 自动用 UTC 时间戳，避免重复评测时撞目录
+  run_id:
+  max_workers: 2
+  task_timeout_seconds: 600
+  vote_rounds: 3
