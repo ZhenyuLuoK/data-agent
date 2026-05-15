@@ -1,0 +1,45 @@
+# KDD Cup 2026 DataAgent-Bench 提交镜像
+# 评测机为 x86-64，构建时必须 --platform linux/amd64
+FROM --platform=linux/amd64 python:3.11-slim
+
+# ---- 系统依赖 ----
+# 仅装运行期必须的：构建工具用于个别带 C 扩展的依赖；libgomp1 给 numpy/sklearn；
+# git 是某些 langchain/datasets 走 git+https 元数据时偶发需要。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        libgomp1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---- pip 配置（仅 build 阶段加速；安装完会清空，避免运行期触发联网）----
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# ---- 先拷依赖清单，利用 Docker 层缓存 ----
+COPY pyproject.toml uv.lock README.md ./
+
+# 用 pip 直接装项目本身（pyproject.toml 中 dependencies 会被解析）
+# 不用 uv 是为了减少一层工具依赖；如果你的 uv.lock 有强约束想要严格还原，可改用 uv sync。
+COPY src ./src
+RUN pip install --upgrade pip \
+    && pip install .
+
+# ---- 拷贝运行期需要的最小集 ----
+COPY configs/react_baseline.submit.yaml /app/configs/react_baseline.submit.yaml
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# ---- 风险 3：清空 PIP 镜像源环境变量，避免运行期任何隐式联网 ----
+ENV PIP_INDEX_URL= \
+    PIP_TRUSTED_HOST=
+
+# ---- 评测系统会注入 MODEL_NAME / MODEL_API_URL / MODEL_API_KEY，不在此硬编码 ----
+ENV CONFIG_PATH=/app/configs/react_baseline.submit.yaml
+
+# 评测约定：必须能直接 docker run 跑通，不允许追加参数
+ENTRYPOINT ["/app/entrypoint.sh"]

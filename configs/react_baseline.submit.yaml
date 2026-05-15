@@ -13,6 +13,6 @@ run:
   output_dir: /output
   # run_id 留空 → 自动用 UTC 时间戳，避免重复评测时撞目录
   run_id:
-  max_workers: 2
+  max_workers: 30
   task_timeout_seconds: 600
-  vote_rounds: 3
+  vote_rounds: 1

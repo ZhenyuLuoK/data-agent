@@ -18,7 +18,7 @@ from data_agent_baseline.tools.registry import ToolRegistry
 
 @dataclass(frozen=True, slots=True)
 class ReActAgentConfig:
-    max_steps: int = 16
+    max_steps: int = 30
 
 
 def _strip_json_fence(raw_response: str) -> str:
@@ -97,7 +97,22 @@ class ReActAgent:
     def run(self, task: PublicTask) -> AgentRunResult:
         state = AgentRuntimeState()
         for step_index in range(1, self.config.max_steps + 1):
-            raw_response = self.model.complete(self._build_messages(task, state))
+            try:
+                raw_response = self.model.complete(self._build_messages(task, state))
+            except Exception as exc:
+                state.steps.append(
+                    StepRecord(
+                        step_index=step_index,
+                        thought="",
+                        action="__model_error__",
+                        action_input={},
+                        raw_response="",
+                        observation={"ok": False, "error": str(exc)},
+                        ok=False,
+                    )
+                )
+                state.failure_reason = f"Model call failed: {exc}"
+                break
             try:
                 model_step = parse_model_step(raw_response)
                 tool_result = self.tools.execute(task, model_step.action, model_step.action_input)

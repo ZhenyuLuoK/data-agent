@@ -1,0 +1,26 @@
+# Docker 镜像默认配置：不包含任何 API key。
+# 用户在浏览器 Settings 页面手动填入 model / api_base / api_key，
+# 前端会通过 agent_overrides 在每次 POST /api/runs 时注入。
+# 注：runs.py 已校验「overrides 或 base 至少有一个 api_key」，
+# 故此处留空可强制要求用户在 UI 中填写。
+
+dataset:
+  # 容器内默认数据集挂载点；如果未挂载，builtin task 列表为空，
+  # 用户可通过「Upload」功能自行上传数据。
+  root_path: /app/data/public/input
+
+agent:
+  # 支持 ${VAR:-default} 环境变量替换；默认值仅作占位，前端必须覆盖。
+  model:    ${MODEL_NAME:-qwen3.5-35b-a3b}
+  api_base: ${MODEL_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  # 故意留空：镜像不内置任何 key，必须由前端 agent_overrides.api_key 注入。
+  api_key:  ${MODEL_API_KEY:-}
+  max_steps: 24
+  temperature: 0.0
+
+run:
+  output_dir: /app/artifacts/runs
+  run_id:
+  max_workers: 4
+  task_timeout_seconds: 600
+  vote_rounds: 1

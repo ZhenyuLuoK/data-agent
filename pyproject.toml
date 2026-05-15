@@ -34,10 +34,18 @@ dependencies = [
 dev = [
     "pytest>=8.3.5",
     "ruff>=0.11.0",
+    "httpx>=0.27.0",
+]
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "watchfiles>=0.22.0",
 ]
 
 [project.scripts]
 dabench = "data_agent_baseline.cli:main"
+dabench-web = "data_agent_baseline.web.app:main"
 
 [tool.ruff]
 line-length = 100

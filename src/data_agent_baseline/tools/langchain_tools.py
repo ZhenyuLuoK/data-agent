@@ -17,11 +17,129 @@ by the ``mark_node_done`` tool.
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+# Same convention as logging_setup.FILE_LOG_FORMAT consumers: keep INFO lines
+# short so per-task agent.log files stay under a few hundred KB. DEBUG level
+# bypasses these previews and dumps the raw payloads.
+_TOOL_LOG_PREVIEW_CHARS = 240
+
+
+def _tool_preview(value: Any, *, limit: int = _TOOL_LOG_PREVIEW_CHARS) -> str:
+    """Single-line, length-capped repr of a tool argument or result."""
+    text = value if isinstance(value, str) else repr(value)
+    text = text.replace("\n", "\\n").replace("\r", "\\r")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... (+{len(text) - limit} chars)"
+
+
+def _summarise_tool_result(result: Any) -> str:
+    """Build a high-signal summary line for a tool's return value.
+
+    For dict-typed returns (the common case) we extract counts/sizes that
+    matter most for diagnosing "tool returned nothing" failures (the very
+    bug from task_180): row_count, column_mapping presence, error fields.
+    """
+    if isinstance(result, dict):
+        keys: list[str] = []
+        for key in (
+            "row_count", "rows", "columns", "column_count",
+            "tables", "entries", "matches", "status", "error",
+        ):
+            if key in result:
+                value = result[key]
+                if isinstance(value, list):
+                    keys.append(f"{key}={len(value)}")
+                else:
+                    keys.append(f"{key}={_tool_preview(value, limit=80)}")
+        if keys:
+            return " ".join(keys)
+    return _tool_preview(result)
+
+
+def _wrap_tool_with_logging(
+    func: Callable[..., Any], *, tool_name: str
+) -> Callable[..., Any]:
+    """Decorate a tool's underlying ``_run`` with INFO+DEBUG logging.
+
+    The wrapper preserves the original signature so ``StructuredTool.from_function``
+    still infers the JSON schema from type hints + ``args_schema``. We log:
+
+    * **before**: ``tool_call_start`` — tool name, every kwarg preview
+    * **after success**: ``tool_call_done`` — elapsed_ms + extracted result summary
+    * **after error**: ``tool_call_error`` — elapsed_ms + exception type/message
+
+    INFO lines are length-capped (good for grepping a 50-task benchmark);
+    set ``DABENCH_LOG_LEVEL=DEBUG`` to also get the raw kwargs/result repr.
+    """
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        # StructuredTool always invokes via kwargs, but defensively merge
+        # positional args using the function's parameter order so the log
+        # line never silently drops an argument.
+        merged_args: dict[str, Any] = dict(kwargs)
+        if args:
+            try:
+                param_names = list(func.__code__.co_varnames[: func.__code__.co_argcount])
+                for index, value in enumerate(args):
+                    if index < len(param_names):
+                        merged_args.setdefault(param_names[index], value)
+            except AttributeError:
+                pass
+
+        # INFO: pre-call line. Each arg gets its own ``key=preview`` token
+        # so a `grep "tool_call_start.*tool=query_dataframe"` shows the SQL.
+        if logger.isEnabledFor(logging.INFO):
+            args_summary = " ".join(
+                f"{key}={_tool_preview(value)}" for key, value in merged_args.items()
+            ) or "(no args)"
+            logger.info("tool_call_start tool=%s args=%s", tool_name, args_summary)
+        # DEBUG: full kwargs repr (no truncation).
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "tool_call_input_full tool=%s kwargs=%r", tool_name, merged_args
+            )
+
+        start = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            logger.warning(
+                "tool_call_error tool=%s elapsed_ms=%.0f exc=%s: %s",
+                tool_name,
+                elapsed_ms,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "tool_call_done tool=%s elapsed_ms=%.0f result=%s",
+            tool_name,
+            elapsed_ms,
+            _summarise_tool_result(result),
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "tool_call_result_full tool=%s result=%r", tool_name, result
+            )
+        return result
+
+    # Preserve signature/name so StructuredTool's introspection still works.
+    wrapped.__name__ = func.__name__
+    wrapped.__doc__ = func.__doc__
+    wrapped.__wrapped__ = func  # type: ignore[attr-defined]
+    return wrapped
 
 from data_agent_baseline.benchmark.schema import AnswerTable, PublicTask
 from data_agent_baseline.tools.data_inspect import inspect_data
@@ -113,6 +231,10 @@ class DAGRuntimeState:
     # Audit log of node lifecycle events so _build_step_records can emit
     # synthetic __dag_node_start__ / __dag_node_done__ / __replan__ steps.
     events: list[dict[str, Any]] = field(default_factory=list)
+    # Optional callback invoked after each record_event(); used by the web
+    # layer to flush a partial trace.json so TraceWatcher can pick up
+    # incremental changes while the agent is still running.
+    on_event: Callable[[], None] | None = None
 
     def install(self, dag: PlanDAG) -> None:
         """Install (or replace) the DAG and reset per-node bookkeeping.
@@ -130,6 +252,11 @@ class DAGRuntimeState:
 
     def record_event(self, kind: str, **payload: Any) -> None:
         self.events.append({"kind": kind, **payload})
+        if self.on_event is not None:
+            try:
+                self.on_event()
+            except Exception:  # noqa: BLE001 — never crash the agent
+                pass
 
 @dataclass(slots=True)
 class ToolRunContext:
@@ -149,6 +276,12 @@ class ToolRunContext:
     # exact summary the executor submitted, so we can echo it verbatim into
     # downstream nodes' focused prompts.
     pending_node_done_signals: list[dict[str, str]] = field(default_factory=list)
+    # Discriminator for *why* the LangGraph terminated. Written by the
+    # routers/nodes that decide to bail out (nudge exhaustion, all-DAG-failed,
+    # all-DAG-done-no-answer, replan-budget-exhausted, …) and read back by
+    # ``LangGraphAgent.run`` so the per-task ``failure_reason`` is no longer a
+    # one-size-fits-all "step budget" placeholder.
+    exit_reason: str | None = None
 
 # ---------- Pydantic argument schemas (drives JSON Schema for tool calling) ----
 
@@ -370,7 +503,7 @@ def _build_list_context_tool(task: PublicTask) -> BaseTool:
         return list_context_tree(task, max_depth=max_depth)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="list_context"),
         name="list_context",
         description="List files and directories available under the task context directory.",
         args_schema=ListContextArgs,
@@ -382,7 +515,7 @@ def _build_read_csv_tool(task: PublicTask) -> BaseTool:
         return read_csv_preview(task, path, max_rows=max_rows)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="read_csv"),
         name="read_csv",
         description="Read a preview of a CSV file inside the task context directory.",
         args_schema=ReadCsvArgs,
@@ -394,7 +527,7 @@ def _build_read_json_tool(task: PublicTask) -> BaseTool:
         return read_json_preview(task, path, max_chars=max_chars)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="read_json"),
         name="read_json",
         description="Read a preview of a JSON file inside the task context directory.",
         args_schema=ReadJsonArgs,
@@ -421,7 +554,7 @@ def _build_read_doc_tool(task: PublicTask) -> BaseTool:
         )
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="read_doc"),
         name="read_doc",
         description=(
             "Read a text-like document inside the task context directory. The "
@@ -442,7 +575,7 @@ def _build_glob_files_tool(task: PublicTask) -> BaseTool:
         return glob_files(task, pattern, sort_by=sort_by, limit=limit)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="glob_files"),
         name="glob_files",
         description=(
             "List files under the task context directory matching a glob "
@@ -468,7 +601,7 @@ def _build_query_dataframe_tool(task: PublicTask) -> BaseTool:
         )
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="query_dataframe"),
         name="query_dataframe",
         description=(
             "Run a read-only SQL query over a CSV / TSV / JSON / JSONL / "
@@ -494,7 +627,7 @@ def _build_inspect_data_tool(task: PublicTask) -> BaseTool:
         return inspect_data(absolute_path, table=table, sample_size=sample_size)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="inspect_data"),
         name="inspect_data",
         description=(
             "One-shot column profile of a CSV / TSV / JSON / JSONL / sqlite "
@@ -513,7 +646,7 @@ def _build_inspect_sqlite_schema_tool(task: PublicTask) -> BaseTool:
         return inspect_sqlite_schema(absolute_path)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="inspect_sqlite_schema"),
         name="inspect_sqlite_schema",
         description="Inspect tables and columns in a sqlite/db file inside the task context.",
         args_schema=InspectSqliteSchemaArgs,
@@ -526,7 +659,7 @@ def _build_execute_context_sql_tool(task: PublicTask) -> BaseTool:
         return execute_read_only_sql(absolute_path, sql, limit=limit)
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="execute_context_sql"),
         name="execute_context_sql",
         description="Run a read-only SQL query against a sqlite/db file inside the task context.",
         args_schema=ExecuteContextSqlArgs,
@@ -548,7 +681,7 @@ def _build_execute_python_tool(task: PublicTask) -> BaseTool:
         )
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name="execute_python"),
         name="execute_python",
         description=timeout_description,
         args_schema=ExecutePythonArgs,
@@ -615,7 +748,7 @@ def _build_mark_node_done_tool(context: ToolRunContext) -> BaseTool:
         }
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name=MARK_NODE_DONE_TOOL_NAME),
         name=MARK_NODE_DONE_TOOL_NAME,
         description=(
             "Signal that the currently focused DAG node is complete. You MUST "
@@ -654,7 +787,7 @@ def _build_answer_tool(context: ToolRunContext) -> BaseTool:
         }
 
     return StructuredTool.from_function(
-        func=_run,
+        func=_wrap_tool_with_logging(_run, tool_name=ANSWER_TOOL_NAME),
         name=ANSWER_TOOL_NAME,
         description=(
             "Submit the final answer table. This is the only valid terminating action. "

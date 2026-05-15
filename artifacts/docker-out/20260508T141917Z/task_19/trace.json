@@ -1,0 +1,8 @@
+{
+  "task_id": "task_19",
+  "answer": null,
+  "steps": [],
+  "failure_reason": "Task failed with uncaught error: Missing or placeholder model API key in config.agent.api_key. Set agent.api_key in your YAML to a real value (or use ${ENV_VAR}).",
+  "succeeded": false,
+  "e2e_elapsed_seconds": 0.028
+}

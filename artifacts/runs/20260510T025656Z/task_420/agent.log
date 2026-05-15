@@ -1,0 +1,2 @@
+2026-05-10T11:04:40+0800 [INFO   ] data_agent_baseline.run.runner:309 | task_started task_id=task_420 prediction_filename=prediction.csv trace_suffix=(none) log=/Users/luozhenyu/work/data-agent/artifacts/runs/20260510T025656Z/task_420/agent.log
+2026-05-10T11:04:41+0800 [WARNING] data_agent_baseline.run.runner:346 | task_finished_fail task_id=task_180 elapsed=330.572s reason=Agent did not submit an answer within max_steps.

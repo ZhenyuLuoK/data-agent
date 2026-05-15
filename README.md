@@ -1,229 +1,272 @@
-# Docker 打包指南
+# Data-Agent Baseline
 
-本文档介绍如何将 `data-agent-baseline` 项目打包成 Docker 镜像，以便在 KDD Cup 2026 DataAgent-Bench 评测平台上运行。
+KDD Cup 2026 **DataAgent-Bench** 的 ReAct 风格 baseline，基于 LangGraph + LangChain，
+对单个数据分析任务（含 CSV / Excel / SQLite / Parquet 等多模态数据）自动完成
+「读数据 → 规划 → 多步推理 → 写代码 → 输出 prediction.csv」全流程。
 
-## 📋 前置要求
+仓库同时提供两种使用形态：
 
-- Docker 已安装并正常运行
-- 项目根目录下已有 `Dockerfile`（如果没有，请参考下方的 Dockerfile 示例）
+| 形态 | 入口 | 适用场景 |
+|---|---|---|
+| **CLI Agent** (`dabench`) | `dabench run-benchmark` / `run-task` | 批量评测、提交镜像、CI |
+| **Web Console** (`dabench-web`) | `http://localhost:8000` | 交互式调试、单任务跑、上传自有数据 |
 
-## 🐳 构建 Docker 镜像
+---
 
-### 基础构建命令
+## 📂 项目结构
+
+```
+data-agent/
+├── src/data_agent_baseline/   # Python 主代码（agents / tools / run / web）
+├── web/                       # React + Vite 前端（Web Console UI）
+├── configs/                   # YAML 配置（local / docker / submit / example）
+├── docs/                      # 设计文档 / 架构图 / 论文摘要
+├── data/                      # 本地数据集（已 gitignore）
+├── artifacts/                 # 运行产物（已 gitignore）
+├── Dockerfile                 # data-agent-web 一体化镜像（前后端）
+├── Dockerfile.submit.bak      # KDD Cup 评测提交用镜像（仅 CLI）
+├── entrypoint.web.sh          # Web 镜像入口
+└── pyproject.toml             # 依赖声明（含可选 [web] / [dev] 组）
+```
+
+> **API Key 安全约定**：`configs/react_baseline.local.yaml` 是本地配置，**包含真实 key**，已被
+> `.gitignore` + `.dockerignore` 双重排除，永远不会进入 git 提交或 Docker 镜像。
+
+---
+
+## 1. 本地 Agent 运行（CLI）
+
+### 1.1 环境准备
 
 ```bash
-docker build -t data-agent-baseline:latest .
+# Python 3.10+；推荐使用 uv
+uv venv && source .venv/bin/activate
+uv pip install -e '.[dev]'        # 仅 CLI
+# 或者
+uv pip install -e '.[dev,web]'    # 同时装 Web Console 依赖
 ```
 
-### 带缓存优化的构建
+也可以用 pip：
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev,web]'
+```
+
+### 1.2 准备数据集
+
+把 KDD Cup 公开数据集解压到：
+```
+data/public/input/task_<id>/...
+```
+
+### 1.3 配置 API Key
+
+复制示例配置并填入你的 key：
+```bash
+cp configs/react_baseline.example.yaml configs/react_baseline.local.yaml
+# 编辑 configs/react_baseline.local.yaml，填 model / api_base / api_key
+```
+
+### 1.4 运行
 
 ```bash
-docker build --cache-from data-agent-baseline:latest -t data-agent-baseline:latest .
+# 跑全量 benchmark
+dabench run-benchmark --config configs/react_baseline.local.yaml
+
+# 跑单个 task
+dabench run-task <task_id> --config configs/react_baseline.local.yaml
+
+# 评分
+dabench score --runs-dir artifacts/runs/<run_id>
 ```
 
-### 指定平台构建（如需跨平台兼容）
+产物：`artifacts/runs/<run_id>/task_<id>/`
+- `prediction.csv` —— 评测答案
+- `agent.log` —— 完整 ReAct 轨迹
+- `trace.json` —— 结构化执行日志
+- `dag.svg` —— 任务 DAG 可视化
+
+---
+
+## 2. Agent 评测镜像构建（KDD Cup 提交用）
+
+KDD Cup 评测平台需要一个**仅含 CLI、不含 Web** 的最小镜像，平台运行时挂载 `/input`、
+`/output`，并通过 `MODEL_NAME / MODEL_API_URL / MODEL_API_KEY` 环境变量注入 key。
+
+对应 Dockerfile：`Dockerfile.submit.bak`（如需启用，重命名为 `Dockerfile`）。
+
+### 2.1 构建
 
 ```bash
-docker build --platform linux/amd64 -t data-agent-baseline:latest .
+# 评测机为 x86_64，必须强制 amd64
+docker build --platform linux/amd64 \
+  -t team1408:v2 \
+  -f Dockerfile.submit.bak .
 ```
 
-## 🚀 运行 Docker 容器
-
-### 本地测试运行
+### 2.2 本地试跑
 
 ```bash
-docker run -it \
-  -v /path/to/input:/input \
-  -v /path/to/output:/output \
-  -e MODEL_NAME="your-model-name" \
-  -e MODEL_API_URL="https://your-api-url.com" \
-  -e MODEL_API_KEY="your-api-key" \
-  -e CONFIG_PATH="configs/react_baseline.submit.yaml" \
-  data-agent-baseline:latest
+docker run --rm --platform linux/amd64 \
+  --name team1408 \
+  --cpus=10 --memory=5g \
+  -v "$(pwd)/data/public/input:/input:ro" \
+  -v "$(pwd)/artifacts/docker-out:/output" \
+  -e MODEL_NAME="qwen3.5-35b-a3b" \
+  -e MODEL_API_URL="https://dashscope.aliyuncs.com/compatible-mode/v1" \
+  -e MODEL_API_KEY="${DEV_MODEL_API_KEY}" \
+  team1408:v2 \
+  2>&1 | tee artifacts/docker-out/run.log
 ```
 
-**参数说明：**
-- `-v /path/to/input:/input`: 挂载输入数据集目录
-- `-v /path/to/output:/output`: 挂载输出结果目录
-- `-e MODEL_NAME`: 模型名称
-- `-e MODEL_API_URL`: 模型 API 地址
-- `-e MODEL_API_KEY`: 模型 API 密钥
-- `-e CONFIG_PATH`: 配置文件路径（可选，默认为 `configs/react_baseline.submit.yaml`）
-
-### 后台运行模式
+### 2.3 提交
 
 ```bash
-docker run -d \
-  --name data-agent-run \
-  -v /path/to/input:/input \
-  -v /path/to/output:/output \
-  -e MODEL_NAME="your-model-name" \
-  -e MODEL_API_URL="https://your-api-url.com" \
-  -e MODEL_API_KEY="your-api-key" \
-  data-agent-baseline:latest
+docker save team1408:v2 | gzip > submission.tar.gz
+# 把 submission.tar.gz 上传到评测平台
 ```
 
-查看日志：
-```bash
-docker logs -f data-agent-run
-```
+> 详细约定参见 `Dockerfile.submit.bak` 顶部注释和 `entrypoint.sh`（含 5 秒同步
+> `/output/<run_id>/task_*/prediction.csv → /output/task_*/prediction.csv` 的兜底机制）。
 
-停止容器：
-```bash
-docker stop data-agent-run
-```
+---
 
-## 📦 推送镜像到仓库
+## 3. Data-Agent Web 本地运行
 
-### 推送到 Docker Hub
+Web Console 提供：任务浏览 / 数据上传 / 单任务运行 / 实时 ReAct 流 / DAG 可视化 / 历史对比。
+
+### 3.1 后端
 
 ```bash
-# 登录
-docker login
+# 装 web 可选依赖
+uv pip install -e '.[web]'
 
-# 打标签
-docker tag data-agent-baseline:latest your-username/data-agent-baseline:latest
-
-# 推送
-docker push your-username/data-agent-baseline:latest
+# 启动 FastAPI（默认 :8000）
+dabench-web
+# 或开启热重载
+DABENCH_WEB_RELOAD=1 dabench-web
 ```
 
-### 推送到阿里云容器镜像服务
+后端关键环境变量：
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DABENCH_WEB_HOST` | `0.0.0.0` | 监听地址 |
+| `DABENCH_WEB_PORT` | `8000` | 监听端口 |
+| `DABENCH_WEB_BASE_CONFIG` | `configs/react_baseline.local.yaml` | 默认 AppConfig |
+| `DABENCH_WEB_DATASET_ROOT` | `data/public/input` | builtin task 数据根 |
+| `DABENCH_WEB_DIST_ROOT` | `web/dist` | 前端构建产物（生产模式用） |
+
+### 3.2 前端（开发模式）
 
 ```bash
-# 登录阿里云镜像仓库
-docker login registry.cn-hangzhou.aliyuncs.com
-
-# 打标签
-docker tag data-agent-baseline:latest registry.cn-hangzhou.aliyuncs.com/your-namespace/data-agent-baseline:latest
-
-# 推送
-docker push registry.cn-hangzhou.aliyuncs.com/your-namespace/data-agent-baseline:latest
+cd web
+pnpm install
+pnpm dev          # 开 vite dev server，:5173，自动代理 /api → :8000
 ```
 
-## 🔧 常见问题
+浏览器打开 `http://localhost:5173`。
 
-### 1. 构建失败：依赖安装超时
-
-**解决方案：** 使用国内镜像源加速 pip 安装
-
-在 Dockerfile 中添加：
-```dockerfile
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    -r requirements.txt
-```
-
-### 2. 运行时找不到输入数据
-
-**检查点：**
-- 确认 `/input` 目录已正确挂载
-- 确认输入目录包含完整的 task 子目录结构
-- 验证权限设置是否正确
+### 3.3 前端（生产模式 / 单服务一体化）
 
 ```bash
-# 验证挂载
-docker run -it --rm \
-  -v /path/to/input:/input \
-  data-agent-baseline:latest ls -la /input
+cd web && pnpm build   # 生成 web/dist
+# 回到根目录启动后端，会自动托管 web/dist
+dabench-web
 ```
 
-### 3. 输出结果未同步
+浏览器打开 `http://localhost:8000`，前后端由同一进程提供。
 
-**说明：** `entrypoint.sh` 已内置后台同步进程，每 5 秒自动将结果从 `/output/<run_id>/task_*/` 同步到 `/output/task_*/`。即使容器被强制终止，已完成的任务结果也会被保留。
+---
 
-### 4. 内存不足
+## 4. Data-Agent Web Docker 构建与运行
 
-**解决方案：** 限制容器内存使用
+一体化镜像（Node 构建前端 + Python 跑后端，**镜像内不含任何 API key**），用户在浏览器
+Settings 页填入 key 即可使用。
+
+### 4.1 构建
 
 ```bash
-docker run -m 8g \
-  --memory-swap 16g \
-  [其他参数...] \
-  data-agent-baseline:latest
+docker build -t data-agent-web:latest -f Dockerfile .
 ```
 
-## 📝 Dockerfile 示例
+镜像组成：
+- **Stage 1 (frontend)**：`node:22-bookworm-slim` + `pnpm@9.15.0` → `pnpm build` 出 `web/dist`
+- **Stage 2 (backend)** ：`python:3.11-slim` + `pip install '.[web]'`
+- 产出体积：~1.9 GB（解压）/ ~460 MB（压缩）
 
-如果项目中还没有 Dockerfile，可以创建如下内容：
+安全保证（双保险）：
+1. **构建时**：`.dockerignore` 显式排除 `configs/react_baseline.local.yaml`、`*.local.yaml`、`.env*`
+2. **运行时**：默认 base config 是 `react_baseline.docker.yaml`（key 留空），后端 `runs.py` 强制
+   校验「overrides 或 base 至少一个非空 api_key」，前端不填则 `400` 拒绝创建 run
 
-```dockerfile
-FROM python:3.10-slim
-
-# 设置工作目录
-WORKDIR /app
-
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# 复制依赖文件
-COPY pyproject.toml .
-
-# 安装 Python 依赖
-RUN pip install --no-cache-dir .
-
-# 复制项目代码
-COPY src/ ./src/
-COPY configs/ ./configs/
-COPY entrypoint.sh .
-
-# 赋予执行权限
-RUN chmod +x entrypoint.sh
-
-# 设置环境变量
-ENV PYTHONPATH=/app/src:$PYTHONPATH
-ENV CONFIG_PATH=configs/react_baseline.submit.yaml
-
-# 入口脚本
-ENTRYPOINT ["./entrypoint.sh"]
-```
-
-## 🎯 KDD Cup 评测平台提交
-
-评测平台会自动：
-1. 挂载 `/input` 目录（包含完整数据集）
-2. 挂载 `/output` 目录（用于输出结果）
-3. 注入环境变量：`MODEL_NAME`、`MODEL_API_URL`、`MODEL_API_KEY`
-
-你只需要确保：
-- ✅ Docker 镜像已构建并推送到可访问的仓库
-- ✅ `entrypoint.sh` 能正确处理环境变量
-- ✅ 输出格式符合评测要求（`prediction.csv` 文件）
-
-## 📊 监控与调试
-
-### 查看容器资源使用
+### 4.2 运行
 
 ```bash
-docker stats data-agent-run
+docker run --rm -p 8000:8000 --name data-agent-web data-agent-web:latest
 ```
 
-### 进入运行中的容器调试
+浏览器打开 `http://localhost:8000`：
+1. 点 **Settings** → 填 `model` / `api_base` / `api_key`（勾选「记住」存到 localStorage）→ Save
+2. 回 **Tasks** 或 **Upload** 页 → 选任务 → 点 **Run**
+3. 实时观察 ReAct 步骤 + DAG 演化 + 日志流
+
+### 4.3 持久化产物 / 自带数据集（可选）
 
 ```bash
-docker exec -it data-agent-run bash
+docker run --rm -p 8000:8000 \
+  -v $(pwd)/artifacts:/app/artifacts \
+  -v $(pwd)/data/public/input:/app/data/public/input:ro \
+  --name data-agent-web \
+  data-agent-web:latest
 ```
 
-### 查看容器日志
+### 4.4 导出与分发
 
 ```bash
-# 实时日志
-docker logs -f data-agent-run
+# 导出为 tar
+docker save data-agent-web:latest | gzip > data-agent-web.tar.gz
 
-# 最近 100 行日志
-docker logs --tail 100 data-agent-run
+# 对方加载并启动
+gunzip -c data-agent-web.tar.gz | docker load
+docker run --rm -p 8000:8000 data-agent-web:latest
 ```
 
-## 💡 最佳实践
+跨平台构建（给 x86 机器跑 arm 上构建的镜像）：
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t data-agent-web:latest --load .
+```
 
-1. **分层优化**：将依赖安装和代码复制分开，充分利用 Docker 缓存
-2. **多阶段构建**：如需减小镜像体积，可使用多阶段构建
-3. **.dockerignore**：确保已配置 `.dockerignore` 排除不必要的文件
-4. **健康检查**：生产环境建议添加 HEALTHCHECK 指令
-5. **日志管理**：合理配置日志轮转，避免磁盘空间耗尽
+---
 
+## 📚 进一步阅读
+
+- 架构总览：`docs/agengt_architecture.md` / `docs/agent_architecture_summary.html`
+- 工作流图：`docs/agent-workflow.svg`
+- 后端 API 契约：`docs/backend_requirements.md`
+- 前端设计：`docs/frontend_requirements.md`
+- 评测规则：`docs/rule.md`
+- Case 示例：`docs/example/`
+
+---
+
+## 🛠 常见问题
+
+**Q: 运行 `dabench-web` 报 `ModuleNotFoundError: No module named 'fastapi'`？**
+→ Web 依赖是可选组，需 `pip install -e '.[web]'`。
+
+**Q: Docker 镜像构建时前端 `pnpm install` 失败 (`ERR_UNKNOWN_BUILTIN_MODULE`)？**
+→ Dockerfile 已 pin `pnpm@9.15.0`，对应 `pnpm-lock.yaml` v9.0；如自行改 Node 版本需同步调整。
+
+**Q: 浏览器创建 run 提示 `api_key is required`？**
+→ 这是预期行为：镜像不含 key，请去 Settings 页填入后再 Run。
+
+**Q: 怎么确认镜像里没有真实 key？**
+```bash
+docker run --rm --entrypoint sh data-agent-web:latest \
+  -c "grep -RnE 'sk-[A-Za-z0-9]{20,}' /app/configs /app/src 2>/dev/null \
+       || echo 'OK: no real key found'"
+```
 ## 📚 相关文档
 
 - [项目主要代码 src/data_agent_baseline/agents/langgraph_agent.py]

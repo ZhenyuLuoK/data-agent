@@ -17,6 +17,7 @@ from rich.table import Table
 
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.config import load_app_config
+from data_agent_baseline.logging_setup import init_global_logging
 
 # NOTE: ``data_agent_baseline.run.runner`` pulls in the heavy LangGraph + agent
 # stack (langgraph_agent → matplotlib via dag_visualizer). To keep light-weight
@@ -154,6 +155,7 @@ def run_task_command(
     # heavy LangGraph stack is unavailable.
     from data_agent_baseline.run.runner import create_run_output_dir, run_single_task
 
+    init_global_logging()
     app_config = load_app_config(config)
     try:
         _, run_output_dir = create_run_output_dir(app_config.run.output_dir, run_id=app_config.run.run_id)
@@ -180,6 +182,7 @@ def run_benchmark_command(
     # Lazy import (see note at top of file).
     from data_agent_baseline.run.runner import run_benchmark
 
+    init_global_logging()
     app_config = load_app_config(config)
     dataset = DABenchPublicDataset(app_config.dataset.root_path)
     task_count_per_round = len(dataset.iter_tasks())

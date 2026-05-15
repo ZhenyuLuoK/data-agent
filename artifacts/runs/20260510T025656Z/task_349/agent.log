@@ -1,0 +1,2 @@
+2026-05-10T11:03:50+0800 [INFO   ] data_agent_baseline.run.runner:309 | task_started task_id=task_349 prediction_filename=prediction.csv trace_suffix=(none) log=/Users/luozhenyu/work/data-agent/artifacts/runs/20260510T025656Z/task_349/agent.log
+2026-05-10T11:03:57+0800 [INFO   ] data_agent_baseline.run.runner:339 | task_finished_ok task_id=task_349 elapsed=6.971s prediction=/Users/luozhenyu/work/data-agent/artifacts/runs/20260510T025656Z/task_349/prediction.csv

@@ -48,6 +48,7 @@ class AgentConfig:
     api_key: str = ""
     max_steps: int = 16
     temperature: float = 0.0
+    agent_type: str = "langgraph"  # "langgraph" or "react"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,12 +95,18 @@ def load_app_config(config_path: Path) -> AppConfig:
     dataset_config = DatasetConfig(
         root_path=_path_value(dataset_payload.get("root_path"), dataset_defaults.root_path),
     )
+    raw_agent_type = str(agent_payload.get("agent_type", agent_defaults.agent_type)).strip().lower()
+    if raw_agent_type not in ("langgraph", "react"):
+        raise ValueError(
+            f"agent.agent_type must be 'langgraph' or 'react', got '{raw_agent_type}'"
+        )
     agent_config = AgentConfig(
         model=_resolve_env(str(agent_payload.get("model", agent_defaults.model))),
         api_base=_resolve_env(str(agent_payload.get("api_base", agent_defaults.api_base))),
         api_key=_resolve_env(str(agent_payload.get("api_key", agent_defaults.api_key))),
         max_steps=int(agent_payload.get("max_steps", agent_defaults.max_steps)),
         temperature=float(agent_payload.get("temperature", agent_defaults.temperature)),
+        agent_type=raw_agent_type,
     )
     raw_run_id = run_payload.get("run_id")
     run_id = run_defaults.run_id

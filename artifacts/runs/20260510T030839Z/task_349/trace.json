@@ -1,0 +1,21 @@
+{
+  "task_id": "task_349",
+  "answer": null,
+  "steps": [
+    {
+      "step_index": 1,
+      "thought": "",
+      "action": "__model_error__",
+      "action_input": {},
+      "raw_response": "",
+      "observation": {
+        "ok": false,
+        "error": "Model request failed: Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For details, see: https://help.aliyun.com/zh/model-studio/error-code#token-limit', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}, 'request_id': '1443b4f8-0e06-9061-b1aa-2aaef36f364b'}"
+      },
+      "ok": false
+    }
+  ],
+  "failure_reason": "Model call failed: Model request failed: Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For details, see: https://help.aliyun.com/zh/model-studio/error-code#token-limit', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}, 'request_id': '1443b4f8-0e06-9061-b1aa-2aaef36f364b'}",
+  "succeeded": false,
+  "e2e_elapsed_seconds": 1.427
+}

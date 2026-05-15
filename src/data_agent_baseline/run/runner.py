@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import multiprocessing
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,14 +17,19 @@ from data_agent_baseline.agents.langgraph_agent import (
     LangGraphAgentConfig,
     build_chat_openai,
 )
+from data_agent_baseline.agents.model import OpenAIModelAdapter
+from data_agent_baseline.agents.react import ReActAgent, ReActAgentConfig
 from data_agent_baseline.benchmark.dataset import DABenchPublicDataset
 from data_agent_baseline.config import AppConfig
+from data_agent_baseline.logging_setup import bind_task_log_file
 from data_agent_baseline.run.vote import (
     discover_candidate_filenames,
     vote_all_tasks,
     vote_task_with_candidates,
 )
 from data_agent_baseline.tools.registry import ToolRegistry, create_default_tool_registry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,17 +126,30 @@ def _run_single_task_core(
     public_dataset = DABenchPublicDataset(config.dataset.root_path)
     task = public_dataset.get_task(task_id)
 
+    if config.agent.agent_type == "react":
+        # Legacy pure-ReAct agent: uses OpenAIModelAdapter + ToolRegistry.
+        react_model = OpenAIModelAdapter(
+            model=config.agent.model,
+            api_base=config.agent.api_base,
+            api_key=config.agent.api_key,
+            temperature=config.agent.temperature,
+        )
+        react_tools = tools or create_default_tool_registry()
+        react_agent = ReActAgent(
+            model=react_model,
+            tools=react_tools,
+            config=ReActAgentConfig(max_steps=config.agent.max_steps),
+        )
+        run_result = react_agent.run(task)
+        return run_result.to_dict()
+
+    # Default: LangGraph DAG-based agent.
     # ``tools`` is preserved in the signature for backward compatibility with
     # the legacy ReAct ToolRegistry callers. The LangGraph agent builds its
     # own per-task LangChain tool list internally, so the argument is unused
     # here and intentionally discarded.
     del tools
 
-    # ``max_steps`` is intentionally NOT taken from ``config.agent.max_steps``
-    # any more — it is hard-coded inside ``LangGraphAgentConfig`` so that
-    # tuning the agent's step budget no longer requires editing every YAML
-    # file. The YAML field is left in place for backwards compatibility but
-    # is now ignored at this call site.
     agent = LangGraphAgent(
         model=model or build_model_adapter(config),
         config=LangGraphAgentConfig(),
@@ -281,26 +300,62 @@ def run_single_task(
     task_output_dir = run_output_dir / task_id
     task_output_dir.mkdir(parents=True, exist_ok=True)
 
-    if model is None and tools is None:
-        run_result = _run_single_task_with_timeout(
-            task_id=task_id, config=config, task_output_dir=task_output_dir
+    # Bind a per-task FileHandler so every log record emitted while this
+    # task runs is captured to <task_output_dir>/agent.log. The context
+    # manager detaches the handler on exit so subsequent tasks (in the
+    # same process — e.g. ``max_workers=1`` benchmarks) don't bleed logs
+    # into earlier files.
+    with bind_task_log_file(task_output_dir) as task_log_path:
+        logger.info(
+            "task_started task_id=%s prediction_filename=%s trace_suffix=%s log=%s",
+            task_id,
+            prediction_filename,
+            trace_suffix or "(none)",
+            task_log_path or "(disabled)",
         )
-    else:
-        run_result = _run_single_task_core(
-            task_id=task_id,
-            config=config,
-            model=model,
-            tools=tools,
-            task_output_dir=task_output_dir,
+
+        try:
+            if model is None and tools is None:
+                run_result = _run_single_task_with_timeout(
+                    task_id=task_id, config=config, task_output_dir=task_output_dir
+                )
+            else:
+                run_result = _run_single_task_core(
+                    task_id=task_id,
+                    config=config,
+                    model=model,
+                    tools=tools,
+                    task_output_dir=task_output_dir,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("task_crashed task_id=%s error=%s", task_id, exc)
+            run_result = _failure_run_result_payload(
+                task_id, f"Uncaught exception: {exc}"
+            )
+        run_result["e2e_elapsed_seconds"] = round(perf_counter() - started_at, 3)
+
+        artifacts = _write_task_outputs(
+            task_id,
+            run_output_dir,
+            run_result,
+            prediction_filename=prediction_filename,
+            trace_suffix=trace_suffix,
         )
-    run_result["e2e_elapsed_seconds"] = round(perf_counter() - started_at, 3)
-    return _write_task_outputs(
-        task_id,
-        run_output_dir,
-        run_result,
-        prediction_filename=prediction_filename,
-        trace_suffix=trace_suffix,
-    )
+        if artifacts.succeeded:
+            logger.info(
+                "task_finished_ok task_id=%s elapsed=%.3fs prediction=%s",
+                task_id,
+                run_result["e2e_elapsed_seconds"],
+                artifacts.prediction_csv_path,
+            )
+        else:
+            logger.warning(
+                "task_finished_fail task_id=%s elapsed=%.3fs reason=%s",
+                task_id,
+                run_result["e2e_elapsed_seconds"],
+                artifacts.failure_reason,
+            )
+        return artifacts
 
 
 _INCREMENTAL_VOTE_ROUND_THRESHOLD = 4

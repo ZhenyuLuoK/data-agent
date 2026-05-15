@@ -48,6 +48,7 @@ inside ``ToolNode`` and needs a writable side-channel.
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
 import sys
@@ -55,6 +56,21 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Callable, TypedDict, TypeVar
+
+logger = logging.getLogger(__name__)
+
+# ---- Exit-reason constants ------------------------------------------------
+# These are written to ``tool_run_context.exit_reason`` from inside the
+# graph nodes when they decide to stop. ``LangGraphAgent.run`` reads this
+# field after ``compiled_graph.invoke`` returns so that the per-task
+# trace.json carries an actionable failure_reason instead of the legacy
+# misleading "Agent did not submit an answer within the step budget."
+# tag, which fired for at least four distinct termination paths.
+EXIT_NUDGE_EXHAUSTED = "nudge_exhausted"
+EXIT_DAG_ALL_FAILED = "dag_all_failed"
+EXIT_DAG_DONE_NO_ANSWER = "dag_done_no_answer"
+EXIT_STEP_BUDGET_EXHAUSTED = "step_budget_exhausted"
+EXIT_REPLAN_BUDGET_EXHAUSTED = "replan_budget_exhausted"
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
@@ -124,19 +140,22 @@ class LangGraphAgentConfig:
     # 现在的预算（与 retry 改造后的数值匹配）：
     #   - max_steps_per_node × max_node_attempts × max_replans = 12×2×3 = 72 次 executor 调用
     #   - 加上 1 + max_replans = 3 次 planner 调用
-    #   - executor 单次 ~30s（不重试），planner 单次最坏 ~95s（2 次重试）
-    #   - 总最坏 ≈ 72×30 + 3×95 = 2445s
-    #   - 实测 P95 约 200s，task_timeout_seconds=360 下绝大多数 task 能正常收敛
+    #   - 2026-05 更新：每个 LLM 调用点都开了 max_attempts=5 的 retry（含
+    #     Timeout），单次调用最坏耗时 ≈ 30s + Σ(1+2+4+8+16) ≈ 30s + 31s
+    #     退避 + 5×30s 重新调用 ≈ 211s。这和 task_timeout_seconds 的关系
+    #     交给 runner 层的硬超时兜底（防止 retry 串成 task 永远不结束）。
+    #   - 总最坏 ≈ 72×211 + 3×211 ≈ 4h+，但 retry 只在真异常时触发，
+    #     正常路径仍是 72×~5s + 3×~10s ≈ 6min。
     #
-    # max_replans 从 2 → 3：因为 executor 不再 retry，让外层多 replan 一次补偿。
+    # max_replans 从 2 → 3：让外层多 replan 一次补偿。
     # max_steps_per_node 从 16 → 12：进一步压缩单节点失控时的爆炸面积。
     # recursion limit 下游 = max(8, 72*6) = 432 仍有 headroom。
     max_steps: int = 500
     max_reflections: int = 2
-    max_idle_nudges: int = 2
+    max_idle_nudges: int = 30
     max_replans: int = 2
-    max_node_attempts: int = 2
-    max_steps_per_node: int = 100
+    max_node_attempts: int = 5
+    max_steps_per_node: int = 200
 
 # --------- Prompts ---------------------------------------------------------
 
@@ -476,17 +495,19 @@ def _format_tool_error(exc: Exception) -> str:
 # 与外层叠加：max_steps_per_node × max_node_attempts × max_replans 控制总调用数。
 
 # 默认值（被 _RETRY_PROFILES 覆盖；保留是为了向后兼容旧的 import）。
-LLM_RETRY_MAX_ATTEMPTS = 2
+LLM_RETRY_MAX_ATTEMPTS = 5
 LLM_RETRY_INITIAL_DELAY = 1.0
-LLM_RETRY_MAX_DELAY = 4.0
+LLM_RETRY_MAX_DELAY = 16.0
 
 # Per-label retry profile: max_attempts / initial_delay_s / max_delay_s.
-# 调整原则：调用点对 task 成败影响越大，max_attempts 越大；429 退避上限要明显
-# 大于普通 5xx，因为限流恢复通常需要十几秒。
+# 调整原则（2026-05 版）：用户明确要求"每个 LLM 调用点最多 5 次 retry，防止
+# 整个任务失败"，因此三个 label 统一 max_attempts=5（= 1 次初始 + 5 次重试 =
+# 6 次总尝试）。max_delay=16s 是配合 5 次指数退避选的：1+2+4+8+16 ≈ 31s 总
+# 退避，足够熬过短暂的网关抖动；429 仍走单独的 _RATE_LIMIT_MAX_DELAY。
 _RETRY_PROFILES: dict[str, dict[str, float]] = {
-    "planner":   {"max_attempts": 2.0, "initial_delay": 1.0, "max_delay": 4.0},
-    "executor":  {"max_attempts": 0.0, "initial_delay": 0.0, "max_delay": 0.0},
-    "reflector": {"max_attempts": 0.0, "initial_delay": 0.0, "max_delay": 0.0},
+    "planner":   {"max_attempts": 5.0, "initial_delay": 1.0, "max_delay": 16.0},
+    "executor":  {"max_attempts": 5.0, "initial_delay": 1.0, "max_delay": 16.0},
+    "reflector": {"max_attempts": 5.0, "initial_delay": 1.0, "max_delay": 16.0},
 }
 # 429 限流单独的退避上限：上游 token 桶刷新通常 >10s，4s 上限对 429 几乎等于
 # "立即重试"，浪费一次重试机会。与各 label 共用此值。
@@ -499,14 +520,18 @@ _RATE_LIMIT_MAX_DELAY = 15.0
 # else (e.g. AuthenticationError, BadRequestError, ToolException, ValueError)
 # is re-raised immediately so we don't waste retry budget on un-fixable bugs.
 #
-# 注意：client 端 Timeout 故意不在白名单里 —— 见 _is_retryable_llm_error。
+# 2026-05 更新：原本"client 端 Timeout 不重试"的策略被推翻 —— 实测中
+# Qwen via DashScope 的偶发 30s read timeout 大量打挂本来已经成功提交
+# answer 的 task，重试一次就能恢复。Timeout 现在通过 "Timeout" 子串匹配
+# 和 408 status code 都纳入白名单。
 _RETRYABLE_EXCEPTION_NAME_PARTS: tuple[str, ...] = (
     "Connection",       # APIConnectionError, ConnectionError, ...
     "RateLimit",        # RateLimitError
     "InternalServer",   # InternalServerError (5xx)
     "ServiceUnavailable",
     "BadGateway",       # 502
-    "GatewayTimeout",   # 504（server 端 5xx，不是 client 端 Timeout）
+    "GatewayTimeout",   # 504
+    "Timeout",          # APITimeoutError / ReadTimeout / ConnectTimeout（2026-05 新增）
 )
 
 
@@ -516,22 +541,20 @@ _T = TypeVar("_T")
 def _is_retryable_llm_error(exc: BaseException) -> bool:
     """Return True if ``exc`` looks like a transient network/server hiccup.
 
-    Client 端 Timeout（APITimeoutError / ReadTimeout / ConnectTimeout）一律不
-    重试：当模型本身在生成超长输出导致 read timeout 时，重试只会让请求再慢
-    一遍 30s。让上层 graph 的 max_node_attempts / max_replans 用"换 prompt
-    重新跑一遍"代替"原 prompt 再发一遍"，命中率更高、耗时更短。
+    Client 端 Timeout（APITimeoutError / ReadTimeout / ConnectTimeout）现在
+    也会被重试 —— 见上方 _RETRYABLE_EXCEPTION_NAME_PARTS 注释。配合
+    max_attempts=5 的 retry 预算，能拦下 DashScope 偶发的网关抖动，避免
+    本来已经接近成功的 task 在 reflector 阶段被一次 timeout 直接打挂。
     """
 
     name = type(exc).__name__
-    # 显式排除 client 端 Timeout（server 端的 GatewayTimeout/504 仍走白名单）
-    if "Timeout" in name and "GatewayTimeout" not in name:
-        return False
     if any(part in name for part in _RETRYABLE_EXCEPTION_NAME_PARTS):
         return True
-    # OpenAI's ``APIStatusError`` 暴露 HTTP status code；对 5xx / 429 重试。
-    # 408 (Request Timeout) 不重试（同样的慢请求大概率再 timeout）。
+    # OpenAI's ``APIStatusError`` 暴露 HTTP status code；对 5xx / 429 / 408 重试。
     status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int) and (status_code >= 500 or status_code == 429):
+    if isinstance(status_code, int) and (
+        status_code >= 500 or status_code == 429 or status_code == 408
+    ):
         return True
     return False
 
@@ -581,11 +604,70 @@ def _compute_retry_delay(
     return base * random.random() if base > 0 else 0.0
 
 
+# Maximum chars we keep when previewing message content / tool args / tool
+# results inside INFO logs. DEBUG-level logs print the full payload — set
+# DABENCH_LOG_LEVEL=DEBUG to enable. This is a soft guard against agent.log
+# files growing into the tens of MB on long benchmarks.
+_LLM_LOG_PREVIEW_CHARS = 240
+
+
+def _preview_text(value: Any, *, limit: int = _LLM_LOG_PREVIEW_CHARS) -> str:
+    """Render ``value`` as a single-line, length-capped string for INFO logs.
+
+    Newlines are collapsed so each log line stays one record (greppable,
+    diff-friendly). Long payloads get a `... (+N chars)` suffix so it's
+    obvious they were truncated.
+    """
+    if value is None:
+        return "(none)"
+    text = value if isinstance(value, str) else repr(value)
+    text = text.replace("\n", "\\n").replace("\r", "\\r")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... (+{len(text) - limit} chars)"
+
+
+def _summarise_message_for_log(message: Any) -> str:
+    """One-line summary of a LangChain message for the per-call DEBUG dump.
+
+    Distinguishes role + content length + tool-call count, since the raw
+    ``repr(message)`` is long and noisy.
+    """
+    role = type(message).__name__
+    content = getattr(message, "content", "")
+    content_len = len(content) if isinstance(content, str) else len(str(content))
+    tool_calls = getattr(message, "tool_calls", None) or []
+    tool_call_part = f" tool_calls={len(tool_calls)}" if tool_calls else ""
+    return (
+        f"{role}(content_len={content_len}{tool_call_part}): "
+        f"{_preview_text(content)}"
+    )
+
+
+def _summarise_llm_response(response: Any) -> dict[str, Any]:
+    """Pull the fields we want to log out of a ChatOpenAI response."""
+    content = getattr(response, "content", "")
+    if not isinstance(content, str):
+        content = str(content)
+    tool_calls = getattr(response, "tool_calls", None) or []
+    tool_call_names = [
+        getattr(call, "name", None) or call.get("name", "?")
+        for call in tool_calls
+    ]
+    return {
+        "content_len": len(content),
+        "content_preview": _preview_text(content),
+        "tool_calls": tool_call_names,
+        "tool_call_count": len(tool_calls),
+    }
+
+
 def _invoke_with_retry(
     fn: Callable[[], _T],
     *,
     label: str,
     max_attempts: int | None = None,
+    input_messages: list[Any] | None = None,
 ) -> _T:
     """Call ``fn`` with exponential backoff on transient LLM errors.
 
@@ -594,21 +676,77 @@ def _invoke_with_retry(
     retries because their failures are absorbed by the outer DAG loop /
     are non-essential. Pass ``max_attempts`` explicitly to override.
     Non-retryable exceptions are re-raised immediately.
+
+    ``input_messages`` is optional but strongly recommended: when provided,
+    a one-line INFO summary of the call is logged BEFORE the network round-
+    trip, and a DEBUG dump of every message + the response payload is
+    logged AFTER. Pass ``None`` only from call-sites where surfacing the
+    prompt would be redundant (none today).
     """
 
     profile = _RETRY_PROFILES.get(label, _RETRY_PROFILES["planner"])
     if max_attempts is None:
         max_attempts = int(profile["max_attempts"])
 
+    # ---- Pre-call INFO log: summarise the input prompt -----------------
+    # Keep this one line so the agent.log timeline reads top-to-bottom as a
+    # narrative ("we're about to ask the planner ..." → "planner returned").
+    if input_messages is not None and logger.isEnabledFor(logging.INFO):
+        last_message = input_messages[-1] if input_messages else None
+        last_content = getattr(last_message, "content", "") if last_message else ""
+        if not isinstance(last_content, str):
+            last_content = str(last_content)
+        logger.info(
+            "llm_call_start label=%s input_msgs=%d last_role=%s last_preview=%s",
+            label,
+            len(input_messages),
+            type(last_message).__name__ if last_message else "(none)",
+            _preview_text(last_content),
+        )
+    # DEBUG: dump every message in the prompt so a `grep label=executor`
+    # post-mortem can reproduce exactly what the model was asked.
+    if input_messages is not None and logger.isEnabledFor(logging.DEBUG):
+        for index, message in enumerate(input_messages):
+            logger.debug(
+                "llm_call_input label=%s idx=%d %s",
+                label,
+                index,
+                _summarise_message_for_log(message),
+            )
+
     last_exc: BaseException | None = None
     for attempt in range(max_attempts + 1):  # 1 initial + max_attempts retries
+        attempt_start = time.perf_counter()
         try:
-            return fn()
+            response = fn()
         except Exception as exc:  # noqa: BLE001 — classify below
+            elapsed_ms = (time.perf_counter() - attempt_start) * 1000.0
             last_exc = exc
             if attempt >= max_attempts or not _is_retryable_llm_error(exc):
+                logger.error(
+                    "llm_call_failed label=%s attempt=%d/%d elapsed_ms=%.0f "
+                    "exc=%s: %s",
+                    label,
+                    attempt + 1,
+                    max_attempts + 1,
+                    elapsed_ms,
+                    type(exc).__name__,
+                    exc,
+                )
                 raise
             delay = _compute_retry_delay(exc, attempt, profile)
+            logger.warning(
+                "llm_call_retry label=%s attempt=%d/%d elapsed_ms=%.0f "
+                "exc=%s next_delay_s=%.1f",
+                label,
+                attempt + 1,
+                max_attempts + 1,
+                elapsed_ms,
+                type(exc).__name__,
+                delay,
+            )
+            # Keep the legacy stderr line so anybody tail-ing stderr without
+            # the structured logger still sees retries (entrypoint.sh, CI).
             print(
                 f"[langgraph_agent] {label} LLM call failed "
                 f"(attempt {attempt + 1}/{max_attempts + 1}): "
@@ -617,6 +755,35 @@ def _invoke_with_retry(
             )
             if delay > 0:
                 time.sleep(delay)
+            continue
+
+        # ---- Post-call success logs ------------------------------------
+        elapsed_ms = (time.perf_counter() - attempt_start) * 1000.0
+        summary = _summarise_llm_response(response)
+        logger.info(
+            "llm_call_done label=%s attempt=%d/%d elapsed_ms=%.0f "
+            "out_chars=%d tool_calls=%s out_preview=%s",
+            label,
+            attempt + 1,
+            max_attempts + 1,
+            elapsed_ms,
+            summary["content_len"],
+            summary["tool_calls"] or "(none)",
+            summary["content_preview"],
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            # Full text (no preview cap) at DEBUG level.
+            full_content = getattr(response, "content", "")
+            if not isinstance(full_content, str):
+                full_content = str(full_content)
+            logger.debug(
+                "llm_call_output label=%s attempt=%d full_content=%r tool_calls_full=%r",
+                label,
+                attempt + 1,
+                full_content,
+                getattr(response, "tool_calls", None) or [],
+            )
+        return response  # type: ignore[return-value]
     # Defensive: the loop above always either returns or re-raises.
     raise RuntimeError(  # pragma: no cover
         f"_invoke_with_retry exited without returning; last_exc={last_exc!r}"
@@ -772,6 +939,36 @@ def _profile_doc(task: PublicTask, rel_path: str, *, max_chars: int = 400) -> st
         f"\nFile path: `{rel_path}` (text; pass exactly `{rel_path}` as the "
         f"tool `path` argument)\nHead:\n```\n{head}{suffix}\n```"
     )
+
+
+REASONING_SYSTEM_PROMPT = """You are the **reasoning narrator** for a data analysis agent.
+
+The executor model just decided to call one or more tools, but it returned an
+empty `content` field — only the structured tool_calls, no human-readable
+explanation. Your job: produce that missing explanation so the trace shows a
+proper Reason → Act loop instead of a stream of opaque tool calls.
+
+You will see the full conversation history followed by the executor's most
+recent tool_call(s). Output 1-3 sentences in plain English that:
+  1. summarise what the most recent tool result told us (if any), in one short
+     clause — e.g. "The previous query returned 153 matching CustomerIDs."
+  2. state what gap still needs to be closed for the focused DAG node, in one
+     short clause — e.g. "We still need their August 2012 consumption."
+  3. explain WHY the specific tool + arguments the executor just chose closes
+     that gap — e.g. "Querying yearmonth.csv filtered to Date=201208 and
+     CustomerID IN (...) gives the consumption rows for exactly the customers
+     identified upstream."
+
+STRICT FORMAT RULES:
+- Output plain prose ONLY. No markdown headings, no bullet lists, no JSON.
+- Do NOT call any tool. Do NOT propose changes to the tool_call. Your job is
+  purely to NARRATE the executor's intent, not to second-guess it.
+- Do NOT repeat the tool_call arguments verbatim — refer to them at a higher
+  level ("query yearmonth.csv for August 2012 consumption", not
+  "execute SELECT CustomerID, Consumption FROM df WHERE Date = ...").
+- Keep the whole reply under 80 words. Brevity matters: this text gets
+  prepended into the assistant turn for downstream review.
+"""
 
 
 REFLECTOR_SYSTEM_PROMPT = """You are the **reflector** for a data analysis agent.
@@ -1446,6 +1643,51 @@ def _focused_executor_prompt(
 # --------- Trace conversion -----------------------------------------------
 
 
+def _render_tool_calls_for_trace(tool_calls: list[Any]) -> str:
+    """Render an AIMessage's ``tool_calls`` array into a human-readable JSON string.
+
+    Used as the fallback for ``raw_response`` on tool-call trace rows whose
+    AIMessage carried no natural-language ``content`` (the common case for
+    Qwen via DashScope's OpenAI-compatible endpoint, which leaves ``content``
+    empty whenever the model decides to call a tool). Without this fallback,
+    ~95% of trace.json's tool-call rows showed ``raw_response: ""`` even
+    though the model DID respond — just structurally instead of textually.
+
+    Output shape (multi-call AIMessages produce a JSON array, single-call
+    produces a single object so the common case stays compact):
+
+        {"name": "execute_context_sql", "args": {"path": "...", "sql": "..."}}
+
+    The ``id`` field is dropped: it is a tracing-only opaque string that
+    adds noise without helping a human reader understand the call.
+    """
+
+    if not tool_calls:
+        return ""
+
+    rendered: list[dict[str, Any]] = []
+    for call in tool_calls:
+        # tool_calls items can be either LangChain ``ToolCall`` TypedDicts
+        # (common case) or attribute-style objects depending on the chat
+        # model adapter; getattr-then-fallback keeps both shapes working.
+        if hasattr(call, "get"):
+            name = call.get("name", "")
+            args = call.get("args") or {}
+        else:
+            name = getattr(call, "name", "")
+            args = getattr(call, "args", None) or {}
+        rendered.append({"name": name, "args": args})
+
+    payload: Any = rendered[0] if len(rendered) == 1 else rendered
+    try:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        # Last-ditch fallback: ``args`` may contain non-JSON-serialisable
+        # objects (rare — args usually pass through Pydantic). repr() keeps
+        # the trace row non-empty without crashing trace generation.
+        return repr(payload)
+
+
 def _coerce_observation(message: BaseMessage) -> dict[str, Any]:
     """Best-effort conversion of a LangChain message to the legacy observation dict."""
 
@@ -1514,6 +1756,7 @@ def _build_step_records(
     node_attempt_failed_events = [
         e for e in dag_events if e["kind"] == "node_attempt_failed"
     ]
+    graph_node_events = [e for e in dag_events if e["kind"] == "graph_node"]
 
     # ---- 2. Emit the initial plan step (always present after planner runs) -
     if plan_events:
@@ -1632,6 +1875,31 @@ def _build_step_records(
                 )
             )
 
+    def _append_graph_node_event(event: dict[str, Any]) -> None:
+        nonlocal step_index
+        graph_node = str(event.get("graph_node", ""))
+        if not graph_node:
+            return
+        step_index += 1
+        records.append(
+            StepRecord(
+                step_index=step_index,
+                thought=(
+                    str(event.get("description"))
+                    if event.get("description")
+                    else f"LangGraph node {graph_node} is active."
+                ),
+                action="__graph_node__",
+                action_input={
+                    "graph_node": graph_node,
+                    "node_id": event.get("node_id", ""),
+                },
+                raw_response="",
+                observation={"ok": True, "content": {}},
+                ok=True,
+            )
+        )
+
     # ---- 4. Walk the message stream, weaving in DAG events ----------------
     # Heuristic: a HumanMessage starting with "You are now FOCUSED on DAG node"
     # is the focused-node prompt installed by the scheduler. Use it as the
@@ -1685,6 +1953,17 @@ def _build_step_records(
             )
             continue
 
+        # Pre-render a JSON view of the entire tool_calls array. We use this
+        # as the fallback ``raw_response`` for tool-call steps when the
+        # AIMessage carried no natural-language ``content`` — the common
+        # case for Qwen via DashScope's OpenAI-compatible endpoint, which
+        # returns empty ``content`` whenever the assistant decides to call
+        # a tool. Without this fallback, ~95% of trace.json's tool-call
+        # rows had ``raw_response: ""`` even though the model DID respond
+        # (just structurally instead of textually), making the trace look
+        # like the LLM was silent.
+        tool_calls_json = _render_tool_calls_for_trace(tool_calls)
+
         finished_node_ids: list[str] = []
         for call in tool_calls:
             step_index += 1
@@ -1697,13 +1976,20 @@ def _build_step_records(
                 if paired is not None
                 else {"ok": False, "content": {"error": "Tool result missing."}}
             )
+            # Prefer the model's natural-language thought when present; fall
+            # back to the structural tool_calls JSON so a human skimming the
+            # trace can always see "what the model actually responded with".
+            # Same string is used for every call in a multi-call AIMessage
+            # because ``raw_response`` represents the whole assistant turn,
+            # not a per-call slice (matches the legacy 1-call-per-turn case).
+            raw_response_text = thought_text if thought_text else tool_calls_json
             records.append(
                 StepRecord(
                     step_index=step_index,
                     thought=thought_text if thought_text else "",
                     action=tool_name,
                     action_input=dict(tool_args) if isinstance(tool_args, dict) else {},
-                    raw_response=thought_text,
+                    raw_response=raw_response_text,
                     observation=observation,
                     ok=bool(observation.get("ok", True)),
                 )
@@ -1765,6 +2051,16 @@ def _build_step_records(
                 ok=True,
             )
         )
+
+    # ---- 7. LangGraph node markers at the final tail -----------------------
+    # Partial trace writes these markers live during execution. The final
+    # trace is rebuilt from messages + dag_events after invoke returns, so we
+    # must preserve them here as well; otherwise a terminal `finalize` marker
+    # can be visible live and then disappear when trace.json is finalized.
+    # Keep these after reflection verdicts so the UI's "last recognizable
+    # graph node" remains `finalize` at terminal state.
+    for event in graph_node_events:
+        _append_graph_node_event(event)
 
     return records
 
@@ -1934,6 +2230,13 @@ class LangGraphAgent:
                 dag=dag.to_dict(),
                 parse_error=parse_error,
             )
+            logger.info(
+                "planner task_id=%s nodes=%d final=%s parse_error=%s",
+                task.task_id,
+                len(dag.nodes),
+                dag.final_node_id,
+                parse_error or "none",
+            )
             _render_dag_if_enabled(title=f"Plan — {task.task_id}")
 
             executor_seed: list[BaseMessage] = [
@@ -1981,6 +2284,14 @@ class LangGraphAgent:
                 failure_reason=failure_reason,
                 parse_error=parse_error,
                 attempt=dag_state.replan_count,
+            )
+            logger.warning(
+                "replanner task_id=%s attempt=%d/%d trigger=%s nodes=%d",
+                task.task_id,
+                dag_state.replan_count,
+                max_replans,
+                failure_reason,
+                len(dag.nodes),
             )
             _render_dag_if_enabled(
                 title=f"Replan #{dag_state.replan_count} — {task.task_id}"
@@ -2178,6 +2489,12 @@ class LangGraphAgent:
                         )
                     )
 
+            tool_run_context.dag_state.record_event(
+                "graph_node",
+                graph_node="executor",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                description="Executor is deciding the next action.",
+            )
             invoke_messages = existing_messages + extra_pre_messages
             response = _invoke_with_retry(
                 lambda: executor_llm.invoke(invoke_messages),
@@ -2195,6 +2512,24 @@ class LangGraphAgent:
                 step_delta = 1
             else:
                 step_delta = 0
+
+            # ---- Live flush: record executor turn for real-time UI --------
+            # Extract tool call names for the partial trace so Timeline /
+            # AgentGraph update during the run, not only after it finishes.
+            tool_call_names: list[str] = []
+            if hasattr(response, "tool_calls") and response.tool_calls:
+                tool_call_names = [tc.get("name", "") if isinstance(tc, dict) else getattr(tc, "name", "") for tc in response.tool_calls]
+            response_text = ""
+            if hasattr(response, "content") and isinstance(response.content, str):
+                response_text = response.content[:200]
+            tool_run_context.dag_state.record_event(
+                "executor_turn",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                tool_calls=tool_call_names,
+                text_preview=response_text,
+                step_in_node=state.get("steps_in_current_node", 0) + step_delta,
+            )
+
             # Persist injected guard messages alongside the response so
             # trace.json + reflector both see the warning. ``add_messages``
             # reducer concatenates the list to state["messages"].
@@ -2202,6 +2537,123 @@ class LangGraphAgent:
                 "messages": [*extra_pre_messages, response],
                 "steps_in_current_node": state.get("steps_in_current_node", 0) + step_delta,
             }
+
+        def reasoning_node(state: AgentState) -> dict[str, Any]:
+            """Force a textual Reason → Act trail in front of every tool call.
+
+            Why this exists: Qwen via DashScope's OpenAI-compatible endpoint
+            almost always returns ``content=""`` when it decides to call a
+            tool — only the structured tool_calls come back. The trace then
+            looks like a stream of opaque actions with no thought attached,
+            which (a) makes debugging miserable and (b) starves the
+            reflector of reasoning to judge against. This node intercepts
+            executor turns that have tool_calls but no content, asks a
+            second LLM call to narrate the intent in 1-3 sentences, and
+            REPLACES the executor's AIMessage in-place (same id → the
+            ``add_messages`` reducer overwrites instead of appending) so
+            the conversation still reads as a single assistant turn whose
+            content + tool_calls are aligned. The OpenAI tool-message
+            pairing protocol stays intact (no extra AIMessage between
+            tool_calls and their ToolMessage replies).
+
+            Short-circuit: when the executor already provided non-empty
+            content (rare on Qwen, common on GPT-4 / Claude), we return
+            ``{}`` and skip the LLM round-trip entirely — no need to spend
+            tokens narrating reasoning the model already produced.
+            """
+
+            last_ai = _last_ai_message(state["messages"])
+            if last_ai is None or not _has_pending_tool_calls(last_ai):
+                # Nothing to narrate. Defensive: route_after_executor only
+                # routes here when both conditions hold, but stay safe.
+                return {}
+
+            def _record_tools_node() -> None:
+                tool_run_context.dag_state.record_event(
+                    "graph_node",
+                    graph_node="tools",
+                    node_id=tool_run_context.dag_state.current_node_id or "",
+                    description="Tools is executing the selected tool call.",
+                )
+
+            # Short-circuit: model already gave us a thought. Trace will
+            # render it as the tool-call row's `thought` / `raw_response`.
+            if _ai_message_text(last_ai).strip():
+                _record_tools_node()
+                return {}
+
+            # Build the narration prompt. We pass the message history MINUS
+            # the executor's last AIMessage and re-encode its tool_calls as
+            # plain text inside the trailing HumanMessage. Why: the
+            # narrator LLM is invoked WITHOUT bind_tools, and OpenAI-style
+            # backends (incl. DashScope) reject a request whose final
+            # message is an `AIMessage(tool_calls=[...])` not followed by
+            # a matching ToolMessage — the protocol assumes tool_calls are
+            # always either being declared (with `tools=[...]`) or being
+            # answered. Stripping the AIMessage and inlining the call as
+            # text sidesteps both constraints, while still giving the
+            # narrator the full upstream context (focused-node prompt,
+            # prior tool results) it needs to produce specific reasoning.
+            tool_run_context.dag_state.record_event(
+                "graph_node",
+                graph_node="reasoning",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                description="Reasoning is narrating why the selected tool call is needed.",
+            )
+            tool_calls_summary = _render_tool_calls_for_trace(
+                list(last_ai.tool_calls or [])
+            )
+            narration_response = _invoke_with_retry(
+                lambda: self.model.invoke(
+                    [
+                        SystemMessage(content=REASONING_SYSTEM_PROMPT),
+                        *state["messages"][:-1],
+                        HumanMessage(
+                            content=(
+                                "The assistant just decided to make the "
+                                "following tool call(s):\n\n"
+                                f"{tool_calls_summary}\n\n"
+                                "Narrate, in 1-3 plain-English sentences, "
+                                "WHY this specific call (those exact "
+                                "arguments) was the right next move given "
+                                "the conversation above. Output prose only "
+                                "— no markdown, no JSON, no second-guessing "
+                                "the call itself."
+                            )
+                        ),
+                    ]
+                ),
+                label="reasoning",
+            )
+            narration_text = (
+                narration_response.content
+                if isinstance(narration_response.content, str)
+                else str(narration_response.content)
+            ).strip()
+
+            if not narration_text:
+                # Narrator itself blanked out (rare). Skip the rewrite —
+                # leaving the original empty-content AIMessage is no worse
+                # than what we had before this node existed.
+                _record_tools_node()
+                return {}
+
+            # Replace executor's AIMessage in-place: same id triggers the
+            # ``add_messages`` reducer's "overwrite by id" path (verified
+            # against langgraph 0.2+ in unit tests during development).
+            # We preserve tool_calls verbatim so ToolNode still executes
+            # exactly what the executor decided.
+            replacement = AIMessage(
+                id=last_ai.id,
+                content=narration_text,
+                tool_calls=last_ai.tool_calls,
+                additional_kwargs={
+                    **(getattr(last_ai, "additional_kwargs", None) or {}),
+                    "reasoning_injected": True,
+                },
+            )
+            _record_tools_node()
+            return {"messages": [replacement]}
 
         def node_failure_node(state: AgentState) -> dict[str, Any]:
             """Handle a soft failure for the currently focused DAG node.
@@ -2271,6 +2723,12 @@ class LangGraphAgent:
                 if tool_run_context.dag_state.dag is not None
                 else {}
             )
+            tool_run_context.dag_state.record_event(
+                "graph_node",
+                graph_node="reflector",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                description="Reflector is checking whether the submitted answer is good enough.",
+            )
             verdict_response = _invoke_with_retry(
                 lambda: self.model.invoke(
                     [
@@ -2327,6 +2785,12 @@ class LangGraphAgent:
         def finalizer_node(state: AgentState) -> dict[str, Any]:
             # No-op node: presence in the graph is what triggers END routing.
             del state
+            tool_run_context.dag_state.record_event(
+                "graph_node",
+                graph_node="finalize",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                description="Finalize is closing the LangGraph run.",
+            )
             return {}
 
         def nudge_node(state: AgentState) -> dict[str, Any]:
@@ -2402,7 +2866,12 @@ class LangGraphAgent:
             if last_ai is None:
                 return "finalize"
             if _has_pending_tool_calls(last_ai):
-                return "tools"
+                # Always go through `reasoning` first so every tool call has
+                # a textual rationale attached. The reasoning node itself
+                # short-circuits when the executor already produced content,
+                # so the only added cost is one extra LLM call on the (very
+                # common, on Qwen) empty-content tool-call turns.
+                return "reasoning"
             # No tool_calls. Either the executor finished (rare — model returned
             # a textual conclusion without calling `answer`) or it stalled with
             # an empty turn. Try to nudge a few times before giving up; if the
@@ -2459,6 +2928,7 @@ class LangGraphAgent:
         graph.add_node("replanner", replanner_node)
         graph.add_node("scheduler", dag_scheduler_node)
         graph.add_node("executor", executor_node)
+        graph.add_node("reasoning", reasoning_node)
         graph.add_node("tools", tool_node)
         graph.add_node("node_failure", node_failure_node)
         graph.add_node("reflector", reflector_node)
@@ -2483,12 +2953,17 @@ class LangGraphAgent:
             "executor",
             route_after_executor,
             {
-                "tools": "tools",
+                "reasoning": "reasoning",
                 "nudge": "nudge",
                 "node_failure": "node_failure",
                 "finalize": "finalize",
             },
         )
+        # `reasoning` always falls through to `tools`: by the time we get
+        # here the executor already chose tool_calls, the reasoning node
+        # only annotates them with a textual rationale (or no-ops on
+        # short-circuit). Routing back through executor would loop.
+        graph.add_edge("reasoning", "tools")
         graph.add_edge("nudge", "executor")
         graph.add_conditional_edges(
             "tools",
@@ -2539,6 +3014,143 @@ class LangGraphAgent:
         tool_run_context = ToolRunContext()
         reflection_notes: list[str] = []
         tools = build_langchain_tools(task, tool_run_context)
+
+        # ---- Live partial-trace flushing ------------------------------------
+        # The web UI's TraceWatcher polls trace.json every 0.25 s and pushes
+        # incremental ``step`` / ``dag_update`` WS events to the frontend.
+        # Previously trace.json was only written AFTER ``invoke()`` returned,
+        # so the UI showed nothing until the run finished.  Now we hook into
+        # DAGRuntimeState.on_event and flush a lightweight partial trace on
+        # every plan / node_start / node_done / replan event so the watcher
+        # picks up changes in near-real-time.
+        if task_output_dir is not None:
+            _partial_trace_path = task_output_dir / "trace.json"
+
+            def _flush_partial_trace() -> None:
+                """Write a partial trace.json from dag + executor events.
+
+                Emits DAG lifecycle steps (plan / node_start / node_done /
+                replan / node_attempt_failed) AND executor tool-call steps
+                so the UI's Timeline, AgentGraph, and DAG all update in
+                real-time during the run — not only after it finishes.
+                """
+                dag_state = tool_run_context.dag_state
+                events = dag_state.events
+                if not events:
+                    return
+                partial_steps: list[dict[str, Any]] = []
+                step_idx = 0
+                for event in events:
+                    kind = event.get("kind")
+                    if kind == "plan" or kind == "replan":
+                        step_idx += 1
+                        partial_steps.append({
+                            "step_index": step_idx,
+                            "thought": "Planner produced a DAG plan." if kind == "plan" else "Replanner produced a new DAG plan.",
+                            "action": "__plan__",
+                            "action_input": {},
+                            "raw_response": event.get("raw", ""),
+                            "observation": {
+                                "ok": event.get("parse_error") is None,
+                                "content": {
+                                    "dag": event.get("dag", {}),
+                                    "parse_error": event.get("parse_error"),
+                                },
+                            },
+                        })
+                    elif kind == "node_start":
+                        step_idx += 1
+                        partial_steps.append({
+                            "step_index": step_idx,
+                            "thought": f"Scheduler focused DAG node {event.get('node_id')}.",
+                            "action": "start_node",
+                            "action_input": {"node_id": event.get("node_id", "")},
+                            "raw_response": "",
+                            "observation": {
+                                "ok": True,
+                                "content": {
+                                    "node_id": event.get("node_id"),
+                                    "goal": event.get("goal"),
+                                    "is_final": event.get("is_final"),
+                                },
+                            },
+                        })
+                    elif kind == "node_done":
+                        step_idx += 1
+                        partial_steps.append({
+                            "step_index": step_idx,
+                            "thought": f"Executor signalled DAG node {event.get('node_id')} as done.",
+                            "action": "mark_node_done",
+                            "action_input": {
+                                "node_id": event.get("node_id", ""),
+                                "output_summary": event.get("summary", ""),
+                            },
+                            "raw_response": event.get("summary", ""),
+                            "observation": {"ok": True, "content": {}},
+                        })
+                    elif kind == "node_attempt_failed":
+                        step_idx += 1
+                        partial_steps.append({
+                            "step_index": step_idx,
+                            "thought": f"Node {event.get('node_id')} attempt #{event.get('attempt')} exhausted its step budget.",
+                            "action": "mark_node_failed",
+                            "action_input": {"node_id": event.get("node_id", "")},
+                            "raw_response": "",
+                            "observation": {"ok": False, "content": {}},
+                        })
+                    elif kind == "graph_node":
+                        graph_node = event.get("graph_node", "")
+                        step_idx += 1
+                        partial_steps.append({
+                            "step_index": step_idx,
+                            "thought": event.get("description") or f"LangGraph node {graph_node} is active.",
+                            "action": "__graph_node__",
+                            "action_input": {
+                                "graph_node": graph_node,
+                                "node_id": event.get("node_id", ""),
+                            },
+                            "raw_response": "",
+                            "observation": {"ok": True, "content": {}},
+                        })
+                    elif kind == "executor_turn":
+                        # Executor LLM call — emit tool calls for live
+                        # Timeline + AgentGraph updates.
+                        tool_calls = event.get("tool_calls", [])
+                        text_preview = event.get("text_preview", "")
+                        node_id = event.get("node_id", "")
+                        if tool_calls:
+                            for tc_name in tool_calls:
+                                step_idx += 1
+                                partial_steps.append({
+                                    "step_index": step_idx,
+                                    "thought": text_preview or f"Executor calling tool on node {node_id}.",
+                                    "action": tc_name,
+                                    "action_input": {"node_id": node_id},
+                                    "raw_response": "",
+                                    "observation": {"ok": True, "content": {}},
+                                })
+                        elif text_preview:
+                            step_idx += 1
+                            partial_steps.append({
+                                "step_index": step_idx,
+                                "thought": text_preview,
+                                "action": "__assistant_text__",
+                                "action_input": {"node_id": node_id},
+                                "raw_response": text_preview,
+                                "observation": {"ok": True, "content": {}},
+                            })
+
+                try:
+                    payload = json.dumps(
+                        {"task_id": task.task_id, "steps": partial_steps},
+                        ensure_ascii=False,
+                    )
+                    _partial_trace_path.write_text(payload + "\n", encoding="utf-8")
+                except OSError:
+                    pass
+
+            tool_run_context.dag_state.on_event = _flush_partial_trace
+
         compiled_graph = self._build_graph(
             task=task,
             tools=tools,
@@ -2576,6 +3188,17 @@ class LangGraphAgent:
             )
 
         messages = list(final_state["messages"]) if final_state else []
+        if not any(
+            event.get("kind") == "graph_node"
+            and event.get("graph_node") == "finalize"
+            for event in tool_run_context.dag_state.events
+        ):
+            tool_run_context.dag_state.record_event(
+                "graph_node",
+                graph_node="finalize",
+                node_id=tool_run_context.dag_state.current_node_id or "",
+                description="Finalize is closing the LangGraph run.",
+            )
         # Take a snapshot copy of the DAG event log so step-record translation
         # never sees later mutations (defensive — events list is normally
         # write-only after invoke returns, but copying is cheap).
@@ -2643,6 +3266,11 @@ def build_chat_openai(
         # explicit one so connection issues fail fast and produce a clear error.
         # 注意：max_retries 必须设为 0，否则会和 _invoke_with_retry 形成双层叠加重试，
         # 单次卡顿可放大到 (1+2)×(1+N)×timeout 秒，详见 LLM_RETRY_MAX_ATTEMPTS 注释。
-        timeout=30,
-        max_retries=0,
+        # 2026-05 调整：30s → 60s。原因：DashScope 上 reflector / 长 prompt 调用
+        # 经常单次响应 >30s（task_199 实测连续 6 次卡 30s 才超时），把客户端
+        # timeout 拉长一倍能把"上游真的在慢慢生成"和"上游断了"两类情况区分开，
+        # 显著降低不必要的应用层 retry 次数。最坏单次 LLM 调用耗时随之放大到
+        # 60s × 6 次 + ~31s 退避 ≈ 391s，配合 _invoke_with_retry 的 5 次重试预算。
+        timeout=120,
+        max_retries=3,
     )

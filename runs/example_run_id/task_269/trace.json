@@ -1,0 +1,8 @@
+{
+  "task_id": "task_269",
+  "answer": null,
+  "steps": [],
+  "failure_reason": "Task failed with uncaught error: Model request failed: Error code: 429 - {'error': {'message': 'You exceeded your current quota, please check your plan and billing details. For details, see: https://help.aliyun.com/zh/model-studio/error-code#token-limit', 'type': 'insufficient_quota', 'param': None, 'code': 'insufficient_quota'}, 'request_id': 'd9675d36-3e1a-9d33-ad85-52f00e5e8162'}",
+  "succeeded": false,
+  "e2e_elapsed_seconds": 2.33
+}
